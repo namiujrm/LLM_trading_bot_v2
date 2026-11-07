@@ -6,7 +6,8 @@ services:
     container_name: llm_trading_bot_v2_core
     restart: unless-stopped
     env_file:
-      - ../.env
+      - path: ../.env
+        required: false
     environment:
       POSTGRES_HOST: trading_timescaledb_pgvector
       POSTGRES_PORT: 5432
