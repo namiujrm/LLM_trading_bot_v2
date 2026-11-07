@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 import pytest
@@ -14,11 +15,11 @@ from trading_bot.infrastructure.config_schemas import RedisConfig
 
 def get_test_redis_config() -> RedisConfig:
     return RedisConfig(
-        host="localhost",
-        port=6379,
-        db=0,
-        password="",
-        ssl=False,
+        host=os.getenv("REDIS_HOST", "localhost"),
+        port=int(os.getenv("REDIS_PORT", "6379")),
+        db=int(os.getenv("REDIS_DB", "0")),
+        password=os.getenv("REDIS_PASSWORD", ""),
+        ssl=os.getenv("REDIS_SSL", "false").lower() == "true",
     )
 
 
