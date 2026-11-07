@@ -1,0 +1,58 @@
+# Version control & tooling metadata
+.git/
+.github/
+.gitignore
+.dockerignore
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE & Editor artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test & Linter caches
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+.ruff_cache/
+.import_linter_cache/
+
+# Python compiled bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Large Data & Models
+data/
+*.parquet
+*.tar.gz
+*.zip
+
+# Documentation (not needed in runtime container)
+docs/
+
+# Agent scratch & logs
+.agents/teamwork/
+*.log
+
+# Node & 9router temporary files
+node_modules/
+.9router/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,27 @@
+services:
+  trading-bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: llm_trading_bot_v2_core
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_HOST: trading_timescaledb_pgvector
+      POSTGRES_PORT: 5432
+      REDIS_HOST: trading_redis_governor
+      REDIS_PORT: 6379
+      NINEROUTER_BASE_URL: http://trading_9router_gateway:20128/v1
+    volumes:
+      - ../src:/app/src
+      - ../tests:/app/tests
+      - ../scripts:/app/scripts
+      - ../sql:/app/sql
+      - ../data:/app/data
+    networks:
+      - trading_net
+
+networks:
+  trading_net:
+    name: trading_net

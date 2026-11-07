@@ -1,0 +1,12 @@
+{
+  "clean-arch-verify-gate": {
+    "enabled": true,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "uv run python scripts/verify_stop_hook.py",
+        "timeout": 60
+      }
+    ]
+  }
+}

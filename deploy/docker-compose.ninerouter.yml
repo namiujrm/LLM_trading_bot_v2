@@ -1,0 +1,20 @@
+services:
+  ninerouter:
+    image: node:20-alpine
+    container_name: trading_9router_gateway
+    restart: unless-stopped
+    working_dir: /app
+    command: ["sh", "-c", "npx -y 9router@latest --port 20128 --host 0.0.0.0"]
+    ports:
+      - "${NINEROUTER_PORT:-20128}:20128"
+    volumes:
+      - ninerouter_config:/root/.9router
+    networks:
+      - trading_net
+
+volumes:
+  ninerouter_config:
+
+networks:
+  trading_net:
+    name: trading_net

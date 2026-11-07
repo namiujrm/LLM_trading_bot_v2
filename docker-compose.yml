@@ -1,0 +1,3 @@
+# Root proxy redirecting to the full deploy stack in deploy/
+include:
+  - path: deploy/docker-compose.yml

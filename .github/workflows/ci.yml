@@ -1,0 +1,97 @@
+name: CI Verification Loop
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 5-Stage Clean Architecture Gate
+    runs-on: ubuntu-latest
+
+    services:
+      timescaledb:
+        image: timescale/timescaledb-ha:pg16
+        ports:
+          - 5433:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: trading_bot_db
+        options: >-
+          --health-cmd "pg_isready -U postgres -d trading_bot_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+
+      - name: Install Dependencies
+        run: uv sync --frozen --dev
+
+      - name: Apply TimescaleDB Schema & Extensions
+        run: |
+          CONTAINER_ID=$(docker ps -q --filter ancestor=timescale/timescaledb-ha:pg16 | head -n 1)
+          docker exec -i "$CONTAINER_ID" psql -U postgres -d trading_bot_db < sql/001_init_schema.sql
+
+      - name: "Gate 1/5: Ruff Lint & Format"
+        run: |
+          uv run ruff check src tests scripts
+          uv run ruff format --check src tests scripts
+
+      - name: "Gate 2/5: Pyright Strict Type Check"
+        run: uv run pyright src tests scripts
+
+      - name: "Gate 3/5: AST Zero-Default & Anti-Hardcode Gate"
+        run: uv run python scripts/check_no_defaults_or_hardcode.py
+
+      - name: "Gate 4/5: Import-Linter Architecture Contracts"
+        run: uv run lint-imports
+
+      - name: "Gate 5/5: Pytest Suite"
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5433
+          POSTGRES_DB: trading_bot_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: uv run pytest tests -v
+
+      - name: "Validate Docker Compose Configurations"
+        run: |
+          docker compose config --quiet
+          docker compose -f deploy/docker-compose.timescaledb.yml config --quiet
+          docker compose -f deploy/docker-compose.redis.yml config --quiet
+          docker compose -f deploy/docker-compose.ninerouter.yml config --quiet
+          docker compose -f deploy/docker-compose.app.yml config --quiet
+          docker compose -f deploy/docker-compose.yml config --quiet

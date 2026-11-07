@@ -1,0 +1,92 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16
+    container_name: trading_timescaledb_pgvector
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-trading_bot_db}
+    volumes:
+      - tsdb_data:/home/postgres/pgdata/data
+      - ../sql/001_init_schema.sql:/docker-entrypoint-initdb.d/001_init_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-trading_bot_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - trading_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: trading_redis_governor
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - trading_net
+
+  ninerouter:
+    image: node:20-alpine
+    container_name: trading_9router_gateway
+    restart: unless-stopped
+    working_dir: /app
+    command: ["sh", "-c", "npx -y 9router@latest --port 20128 --host 0.0.0.0"]
+    ports:
+      - "${NINEROUTER_PORT:-20128}:20128"
+    volumes:
+      - ninerouter_config:/root/.9router
+    networks:
+      - trading_net
+
+  trading-bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: llm_trading_bot_v2_core
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_HOST: trading_timescaledb_pgvector
+      POSTGRES_PORT: 5432
+      REDIS_HOST: trading_redis_governor
+      REDIS_PORT: 6379
+      NINEROUTER_BASE_URL: http://trading_9router_gateway:20128/v1
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ninerouter:
+        condition: service_started
+    volumes:
+      - ../src:/app/src
+      - ../tests:/app/tests
+      - ../scripts:/app/scripts
+      - ../sql:/app/sql
+      - ../data:/app/data
+    networks:
+      - trading_net
+
+volumes:
+  tsdb_data:
+  redis_data:
+  ninerouter_config:
+
+networks:
+  trading_net:
+    name: trading_net

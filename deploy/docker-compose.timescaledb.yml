@@ -1,0 +1,29 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16
+    container_name: trading_timescaledb_pgvector
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-trading_bot_db}
+    volumes:
+      - tsdb_data:/home/postgres/pgdata/data
+      - ../sql/001_init_schema.sql:/docker-entrypoint-initdb.d/001_init_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-trading_bot_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - trading_net
+
+volumes:
+  tsdb_data:
+
+networks:
+  trading_net:
+    name: trading_net
