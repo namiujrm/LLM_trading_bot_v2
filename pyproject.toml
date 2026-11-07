@@ -63,6 +63,8 @@ ignore = ["E501", "SIM108", "SIM401"]
 # =====================================================================
 [tool.pyright]
 include = ["src", "tests", "scripts"]
+venvPath = "."
+venv = ".venv"
 pythonVersion = "3.11"
 typeCheckingMode = "strict"
 reportMissingImports = true

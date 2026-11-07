@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 
@@ -19,12 +20,12 @@ from trading_bot.infrastructure.config_schemas import DatabaseConfig
 
 def get_test_db_config() -> DatabaseConfig:
     return DatabaseConfig(
-        host="localhost",
-        port=5433,
-        db_name="trading_bot_db",
-        user="postgres",
-        password="postgres",
-        max_connections=5,
+        host=os.getenv("POSTGRES_HOST", "localhost"),
+        port=int(os.getenv("POSTGRES_PORT", "5433")),
+        db_name=os.getenv("POSTGRES_DB", "trading_bot_db"),
+        user=os.getenv("POSTGRES_USER", "postgres"),
+        password=os.getenv("POSTGRES_PASSWORD", "postgres"),
+        max_connections=int(os.getenv("POSTGRES_MAX_CONNECTIONS", "5")),
     )
 
 
