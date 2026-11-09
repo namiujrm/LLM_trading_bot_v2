@@ -5,6 +5,7 @@ from __future__ import annotations
 from trading_bot.infrastructure.config_schemas import (
     BinanceConfig,
     DatabaseConfig,
+    LoggingConfig,
     NinerouterConfig,
     RedisConfig,
     TelegramConfig,
@@ -13,6 +14,7 @@ from trading_bot.infrastructure.config_schemas import (
 __all__ = [
     "BinanceConfig",
     "DatabaseConfig",
+    "LoggingConfig",
     "NinerouterConfig",
     "RedisConfig",
     "TelegramConfig",

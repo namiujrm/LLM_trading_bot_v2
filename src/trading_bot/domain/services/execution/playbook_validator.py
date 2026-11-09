@@ -83,12 +83,75 @@ class PlaybookValidator:
             return self._verify_liquidation_exhaustion(market_input)
         if playbook == PlaybookType.CROSS_ASSET_LEAD_LAG_CATCHUP:
             return self._verify_lead_lag_catchup(market_input)
+        if playbook == PlaybookType.GENERAL_ALPHA_MOMENTUM:
+            return self._verify_general_alpha_momentum(market_input)
 
         return PlaybookValidationResult(
             is_valid=True,
             playbook=PlaybookType.NO_TRADE_REGIME,
             allowed_side=TradeSide.FLAT,
             reason="NO_TRADE_DEFAULT",
+        )
+
+    def classify_and_validate(
+        self,
+        market_input: PlaybookPreconditionsInput,
+    ) -> PlaybookValidationResult:
+        """Classify incoming market state into a tactical playbook setup (Zero Defaults).
+
+        1. Global circuit breaker: OOD warning or Macro Event Blackout forces NO_TRADE_REGIME.
+        2. Trend Continuation Breakout (accepts LONG_BUILDUP, SHORT_BUILDUP, SHORT_COVERING).
+        3. Liquidation Exhaustion Reversal.
+        4. Cross-Asset Lead-Lag Catchup.
+        5. General Alpha Momentum (if max(p_long, p_short) >= trend_min_calibrated_prob).
+        6. Otherwise forces NO_TRADE_REGIME.
+        """
+        if market_input.is_ood_warning:
+            return PlaybookValidationResult(
+                is_valid=False,
+                playbook=PlaybookType.NO_TRADE_REGIME,
+                allowed_side=TradeSide.FLAT,
+                reason="OUT_OF_DISTRIBUTION_WARNING_ACTIVE",
+            )
+        if market_input.pre_event_blackout:
+            return PlaybookValidationResult(
+                is_valid=False,
+                playbook=PlaybookType.NO_TRADE_REGIME,
+                allowed_side=TradeSide.FLAT,
+                reason="MACRO_EVENT_BLACKOUT_WINDOW_ACTIVE",
+            )
+
+        trend_res = self._verify_trend_continuation(market_input)
+        if trend_res.is_valid:
+            return trend_res
+
+        reversal_res = self._verify_liquidation_exhaustion(market_input)
+        if reversal_res.is_valid:
+            return reversal_res
+
+        lead_lag_res = self._verify_lead_lag_catchup(market_input)
+        if lead_lag_res.is_valid:
+            return lead_lag_res
+
+        max_prob = max(market_input.p_long_cal, market_input.p_short_cal)
+        if max_prob >= self.cfg.trend_min_calibrated_prob:
+            side = (
+                TradeSide.LONG
+                if market_input.p_long_cal > market_input.p_short_cal
+                else TradeSide.SHORT
+            )
+            return PlaybookValidationResult(
+                is_valid=True,
+                playbook=PlaybookType.GENERAL_ALPHA_MOMENTUM,
+                allowed_side=side,
+                reason="GENERAL_ALPHA_MOMENTUM_CLEARED",
+            )
+
+        return PlaybookValidationResult(
+            is_valid=False,
+            playbook=PlaybookType.NO_TRADE_REGIME,
+            allowed_side=TradeSide.FLAT,
+            reason="NO_PLAYBOOK_PRECONDITIONS_MET",
         )
 
     def _verify_trend_continuation(
@@ -106,6 +169,7 @@ class PlaybookValidator:
         valid_oi = inp.oi_quadrant in (
             OIPriceQuadrant.LONG_BUILDUP,
             OIPriceQuadrant.SHORT_BUILDUP,
+            OIPriceQuadrant.SHORT_COVERING,
         )
         if not valid_oi:
             return PlaybookValidationResult(
@@ -132,7 +196,10 @@ class PlaybookValidator:
                 reason=f"ML_CONFIDENCE_INSUFFICIENT ({max_prob:.3f} < {self.cfg.trend_min_calibrated_prob:.3f})",
             )
 
-        if inp.oi_quadrant == OIPriceQuadrant.LONG_BUILDUP and inp.p_long_cal >= inp.p_short_cal:
+        if (
+            inp.oi_quadrant in (OIPriceQuadrant.LONG_BUILDUP, OIPriceQuadrant.SHORT_COVERING)
+            and inp.p_long_cal >= inp.p_short_cal
+        ):
             side = TradeSide.LONG
         elif inp.oi_quadrant == OIPriceQuadrant.SHORT_BUILDUP and inp.p_short_cal >= inp.p_long_cal:
             side = TradeSide.SHORT
@@ -241,4 +308,25 @@ class PlaybookValidator:
             playbook=PlaybookType.CROSS_ASSET_LEAD_LAG_CATCHUP,
             allowed_side=side,
             reason="LEAD_LAG_CATCHUP_PRECONDITIONS_SATISFIED",
+        )
+
+    def _verify_general_alpha_momentum(
+        self,
+        inp: PlaybookPreconditionsInput,
+    ) -> PlaybookValidationResult:
+        max_prob = max(inp.p_long_cal, inp.p_short_cal)
+        if max_prob < self.cfg.trend_min_calibrated_prob:
+            return PlaybookValidationResult(
+                is_valid=False,
+                playbook=PlaybookType.GENERAL_ALPHA_MOMENTUM,
+                allowed_side=TradeSide.FLAT,
+                reason=f"ML_CONFIDENCE_INSUFFICIENT ({max_prob:.3f} < {self.cfg.trend_min_calibrated_prob:.3f})",
+            )
+
+        side = TradeSide.LONG if inp.p_long_cal > inp.p_short_cal else TradeSide.SHORT
+        return PlaybookValidationResult(
+            is_valid=True,
+            playbook=PlaybookType.GENERAL_ALPHA_MOMENTUM,
+            allowed_side=side,
+            reason="GENERAL_ALPHA_MOMENTUM_CLEARED",
         )

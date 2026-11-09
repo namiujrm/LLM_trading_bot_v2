@@ -96,4 +96,8 @@ def test_playbook_validator_invariants(
         assert hurst >= CONFIG.trend_hurst_min
         assert vpin_pct <= CONFIG.trend_vpin_percentile_max
         assert max(p_long, p_short) >= CONFIG.trend_min_calibrated_prob
-        assert oi_quad in (OIPriceQuadrant.LONG_BUILDUP, OIPriceQuadrant.SHORT_BUILDUP)
+        assert oi_quad in (
+            OIPriceQuadrant.LONG_BUILDUP,
+            OIPriceQuadrant.SHORT_BUILDUP,
+            OIPriceQuadrant.SHORT_COVERING,
+        )
