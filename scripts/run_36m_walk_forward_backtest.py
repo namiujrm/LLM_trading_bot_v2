@@ -139,7 +139,7 @@ def create_walk_forward_config(run_cfg: BacktestRunConfig) -> WalkForwardConfig:
         triple_barrier_config=TripleBarrierConfig(
             pt_multiplier=1.8,
             sl_multiplier=1.8,
-            horizon_bars_1m=120,
+            horizon_bars_1m=180,
             taker_fee_rate=0.0004,
             slippage_rate=0.0001,
             min_tp_to_cost_multiple=1.5,
@@ -149,7 +149,7 @@ def create_walk_forward_config(run_cfg: BacktestRunConfig) -> WalkForwardConfig:
         purged_cv_config=PurgedCVConfig(
             n_splits=5,
             embargo_bars_30m=run_cfg.embargo_bars_30m,
-            max_label_holding_bars_30m=12,
+            max_label_holding_bars_30m=6,
         ),
         conformal_ood_config=ConformalOODConfig(
             feature_names=SUBSPACE_FEATURES,
@@ -164,7 +164,7 @@ def create_walk_forward_config(run_cfg: BacktestRunConfig) -> WalkForwardConfig:
             oof_splits=5,
             clip_eps=1e-4,
             embargo_bars_30m=run_cfg.embargo_bars_30m,
-            max_label_holding_bars_30m=12,
+            max_label_holding_bars_30m=6,
         ),
         constrained_lgbm_config=ConstrainedLGBMConfig(
             max_depth=3,

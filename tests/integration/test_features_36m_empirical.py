@@ -183,9 +183,9 @@ def test_empirical_triple_barrier_label_sanity(symbol: str) -> None:
     bars_held: np.ndarray = df["bars_held_1m"].to_numpy()
     barrier_hits: list[str] = df["barrier_hit"].to_list()
 
-    # 1. Bars held strictly between 1 and 120
+    # 1. Bars held strictly between 1 and 180 (3-hour vertical barrier)
     assert (bars_held >= 1).all(), f"Found bars_held_1m < 1 in {symbol}!"
-    assert (bars_held <= 120).all(), f"Found bars_held_1m > 120 in {symbol}! Max: {bars_held.max()}"
+    assert (bars_held <= 180).all(), f"Found bars_held_1m > 180 in {symbol}! Max: {bars_held.max()}"
 
     # 2. Non-degenerate labels: Longs and Shorts present
     n_long: int = int(y_long.sum())
@@ -229,18 +229,18 @@ def test_empirical_causal_temporality_and_leakage(symbol: str) -> None:
     # 1. Exit time must strictly occur after decision bar open timestamp
     assert (exit_times > timestamps).all(), f"Found exit_time <= timestamp in {symbol}!"
 
-    # 2. Maximum forward duration is 120 minutes + 29 minutes offset from bar open
+    # 2. Maximum forward duration is 180 minutes + 29 minutes offset from bar open
     diff_ms: np.ndarray = (exit_times - timestamps).astype("timedelta64[ms]").astype(np.int64)
     min_diff_ms: int = int(diff_ms.min())
     max_diff_ms: int = int(diff_ms.max())
 
     # Forward 1m candles start at T + 30m. First candle open is T + 30m (diff = 1,800,000 ms).
-    # Last candle (candle 119) open is T + 30m + 119m = T + 149m (diff = 8,940,000 ms).
+    # Last candle (candle 179) open is T + 30m + 179m = T + 209m (diff = 12,540,000 ms).
     assert min_diff_ms >= 1_800_000, (
         f"{symbol} min forward exit difference too small: {min_diff_ms} ms (expected >= 1,800,000 ms)"
     )
-    assert max_diff_ms <= 8_940_000, (
-        f"{symbol} max forward exit difference too large: {max_diff_ms} ms (expected <= 8,940,000 ms)"
+    assert max_diff_ms <= 12_540_000, (
+        f"{symbol} max forward exit difference too large: {max_diff_ms} ms (expected <= 12,540,000 ms)"
     )
 
     # 3. Check bars held correlation with diff_ms:
