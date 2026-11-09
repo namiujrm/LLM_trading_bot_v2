@@ -109,7 +109,7 @@ def create_pipeline_config(
         end_year=2025,
         pt_multiplier=1.8,
         sl_multiplier=1.8,
-        horizon_bars_1m=120,
+        horizon_bars_1m=180,
         taker_fee_rate=0.0004,
         slippage_rate=0.0001,
         min_tp_to_cost_multiple=1.5,
@@ -178,13 +178,8 @@ def resample_1m_to_30m(
             pl.col("volume").sum().alias("volume"),
             pl.col("quote_volume").sum().alias("quote_volume"),
             pl.col("taker_buy_vol").sum().alias("taker_buy_vol"),
-            pl.col("taker_buy_quote_vol").sum().alias("taker_buy_quote_vol"),
             pl.col("trade_count").sum().alias("trade_count"),
             pl.col("ofi_sum").sum().alias("ofi_sum"),
-            pl.col("obi_mean").mean().alias("obi_mean"),
-            pl.col("spread_bps_mean").mean().alias("spread_bps_mean"),
-            pl.col("liq_long_usd").sum().alias("liq_long_usd"),
-            pl.col("liq_short_usd").sum().alias("liq_short_usd"),
         )
         .sort("bucket")
     )
@@ -423,27 +418,27 @@ def compute_derived_series_features(
         z_ofi: np.ndarray = (curr_ofi - mean_ofi) / (std_ofi + 1e-8)
         ofi_z[z_window - 1 :] = np.clip(z_ofi, -3.0, 3.0)
 
-    # 3. OI Price-Quadrant Directional Score
+    # 3. Clean 4-Quadrant Momentum Composite Directional Score (Replaces degenerate OI score)
+    # Combines normalized 6-bar (3h) price momentum with 6-bar net taker flow momentum
     closes: np.ndarray = df_30m["close"].to_numpy()
-    liq_long: np.ndarray = df_30m["liq_long_usd"].to_numpy()
-    liq_short: np.ndarray = df_30m["liq_short_usd"].to_numpy()
-    dp: np.ndarray = np.diff(closes, prepend=closes[0])
-    d_liq: np.ndarray = liq_short - liq_long
+    vol_gk: np.ndarray = df_30m["volatility_gk"].to_numpy()
+    vols: np.ndarray = df_30m["volume"].to_numpy()
+    taker_vols: np.ndarray = df_30m["taker_buy_vol"].to_numpy()
+    net_taker_vol: np.ndarray = 2.0 * taker_vols - vols
 
     oi_score: np.ndarray = np.zeros(n_bars, dtype=np.float64)
-    for i in range(1, n_bars):
-        if dp[i] > 0.0:
-            if d_liq[i] >= 0.0:
-                oi_score[i] = 1.0  # Long Buildup
-            else:
-                oi_score[i] = 0.5  # Short Covering
-        elif dp[i] < 0.0:
-            if d_liq[i] >= 0.0:
-                oi_score[i] = -1.0  # Short Buildup
-            else:
-                oi_score[i] = -0.5  # Long Liquidation
-        else:
-            oi_score[i] = 0.0  # Neutral
+    mom_window: int = 6  # 3.0 hours on 30m candles
+    for i in range(mom_window, n_bars):
+        denom_vol: float = (
+            max(float(vol_gk[i]), 1e-4) * float(closes[i]) * math.sqrt(float(mom_window))
+        )
+        zp: float = math.tanh(
+            (float(closes[i]) - float(closes[i - mom_window])) / max(denom_vol, 1e-12)
+        )
+        vol_sum: float = float(vols[i - mom_window + 1 : i + 1].sum())
+        net_sum: float = float(net_taker_vol[i - mom_window + 1 : i + 1].sum())
+        zf: float = net_sum / max(vol_sum, 1e-12)
+        oi_score[i] = min(1.0, max(-1.0, 0.5 * zp + 0.5 * zf))
 
     # 4 & 5. Funding Rate Crowdedness Pos & Neg Z-score (336 bars = 7 days)
     q_vols: np.ndarray = df_30m["quote_volume"].to_numpy()
@@ -735,7 +730,23 @@ def build_36m_feature_dataset(config: PipelineConfig) -> pl.DataFrame:
             pl.Series("de_prado_weight", de_prado_weights),
         )
 
-        # 8. Numerical Integrity Assertions
+        # 8. Feature Pruning & Numerical Integrity Assertions
+        if "taker_buy_vol" in sym_df.columns:
+            sym_df = sym_df.drop("taker_buy_vol")
+
+        dead_and_redundant_cols = (
+            "obi_mean",
+            "liq_long_usd",
+            "liq_short_usd",
+            "taker_buy_vol",
+            "taker_buy_quote_vol",
+        )
+        for col_name in dead_and_redundant_cols:
+            if col_name in sym_df.columns:
+                raise ValueError(
+                    f"Pruned column `{col_name}` unexpectedly present in {sym} dataset!"
+                )
+
         null_counts: int = int(sym_df.null_count().sum_horizontal().item(0))
         if null_counts > 0:
             raise ValueError(f"Found {null_counts} null values in {sym} dataset!")
@@ -746,6 +757,31 @@ def build_36m_feature_dataset(config: PipelineConfig) -> pl.DataFrame:
                 raise ValueError(f"Feature `{col_name}` contains NaN values for {sym}!")
             if np.isinf(vals).any():
                 raise ValueError(f"Feature `{col_name}` contains Inf values for {sym}!")
+            std_val: float = float(np.std(vals))
+            if col_name == "btc_lead_catchup_gap" and sym == "BTCUSDT":
+                continue
+            if std_val <= 1e-12:
+                raise ValueError(
+                    f"Feature `{col_name}` has degenerate zero variance ({std_val:.8f}) for {sym}!"
+                )
+
+        # Verify no collinear feature pairs with |r| > 0.98
+        for i, f1 in enumerate(CANONICAL_FEATURE_NAMES):
+            v1: np.ndarray = sym_df[f1].to_numpy()
+            s1: float = float(np.std(v1))
+            if s1 <= 1e-12:
+                continue
+            for j in range(i + 1, len(CANONICAL_FEATURE_NAMES)):
+                f2 = CANONICAL_FEATURE_NAMES[j]
+                v2: np.ndarray = sym_df[f2].to_numpy()
+                s2: float = float(np.std(v2))
+                if s2 <= 1e-12:
+                    continue
+                r_val: float = float(abs(np.corrcoef(v1, v2)[0, 1]))
+                if r_val > 0.98:
+                    raise ValueError(
+                        f"Collinear feature pair ({f1} <-> {f2}) has |r| = {r_val:.4f} > 0.98 in {sym}!"
+                    )
 
         # 9. Write Per-Symbol Parquet
         out_sym_file: Path = config.output_dir / f"{sym}.parquet"
