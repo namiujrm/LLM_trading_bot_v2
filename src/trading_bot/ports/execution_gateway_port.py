@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from trading_bot.domain.entities.account_state import (
+from trading_bot.domain.entities.execution.trade_blueprint import BracketOrderTicket
+from trading_bot.domain.entities.risk.account_state import (
     AccountPortfolioContext,
     ActivePositionSnapshot,
     PendingOrderSnapshot,
 )
-from trading_bot.domain.entities.trade_blueprint import BracketOrderTicket
 
 
 @runtime_checkable

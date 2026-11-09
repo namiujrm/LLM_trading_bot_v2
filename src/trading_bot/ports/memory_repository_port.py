@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from trading_bot.domain.entities.episodic_case import (
+from trading_bot.domain.entities.memory.episodic_case import (
     CohortBaseRateSummary,
     EpisodicCase,
     StratifiedMemoryPack,

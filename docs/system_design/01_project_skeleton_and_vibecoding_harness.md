@@ -41,112 +41,173 @@ LLM_trading_bot_v2/
 │   └── system_design/                              # Bộ 9 tài liệu thiết kế hệ thống (00 -> 08)
 │
 ├── src/
-│   ├── __init__.py
-│   │
-│   ├── domain/                                     # === TẦNG 1: DOMAIN (100% Pure Python + Pydantic, 0 I/O) ===
-│   │   ├── AGENTS.md                               # [Rule Tầng Domain] Cấm import thư viện ngoài, khóa công thức Risk
+│   ├── trading_bot/
 │   │   ├── __init__.py
-│   │   ├── entities/
+│   │   │
+│   │   ├── domain/                                     # === TẦNG 1: DOMAIN (100% Pure Python + Pydantic, 0 I/O) ===
+│   │   │   ├── AGENTS.md                               # [Rule Tầng Domain] Cấm import thư viện ngoài, khóa công thức Risk
 │   │   │   ├── __init__.py
-│   │   │   ├── enums.py                            # Side, RegimeType, PlaybookType, OIQuadrant, OutcomeCategory
-│   │   │   ├── market_state.py                     # MicroBar1m, MultiTFBar, FeatureSignalItem, SemanticQuantPacket
-│   │   │   ├── ml_prediction.py                    # DualBinaryPrediction, VennAbersInterval, SHAPFactor, OODState
-│   │   │   ├── trade_blueprint.py                  # MarketThesis, TradeBlueprint, RiskVerdict, BracketOrderTicket
-│   │   │   ├── shadow_order.py                     # ShadowOrder, BarrierTouchResult, PostSLAutopsyPath
-│   │   │   ├── episodic_case.py                    # EpisodicCase (2-Tier), CohortBaseRateSummary, StratifiedMemoryPack
-│   │   │   └── alpha_candidate.py                  # SymbolicAlphaSpec, GatekeeperReport, ChallengerComparison
-│   │   ├── services/
+│   │   │   ├── exceptions.py                           # Typed Domain Exceptions (Fail-Fast, Zero Silent Fallbacks)
+│   │   │   ├── value_objects/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── price.py                            # Price, NormalizedSpread, TickSize Value Objects
+│   │   │   ├── entities/                               # Bounded Sub-Domain Entities (Option B)
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── common/
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   └── enums.py                        # TradeSide, MarketRegime, PlaybookType, OIPriceQuadrant, OutcomeCategory
+│   │   │   │   ├── market/
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   └── market_state.py                 # MicroBar1m, MultiTFBar, FeatureSignalItem, SemanticQuantPacket
+│   │   │   │   ├── quant/
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   ├── quant_configs.py                # QuantEngineConfig, FracDiffConfig, IndicatorParamSchemas
+│   │   │   │   │   ├── quant_features.py               # FeatureVector16D, MicrostructureMetrics, PhysicsState
+│   │   │   │   │   ├── alpha_dsl.py                    # AlphaASTNode, SymbolicExpressionSpec
+│   │   │   │   │   ├── ml_prediction.py                # DualBinaryPrediction, CalibratedProbability, ModelCoherenceReport
+│   │   │   │   │   ├── ood_status.py                   # OODStatus, MahalanobisSubspaceMetrics
+│   │   │   │   │   ├── barrier_label.py                # TripleBarrierSample, UniquenessWeight, ConcurrencyRecord
+│   │   │   │   │   └── alpha_candidate.py              # SymbolicAlphaSpec, GatekeeperReport, ChallengerComparison
+│   │   │   │   ├── risk/
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   └── account_state.py                # MarginContext, PortfolioHeat, NAVRecord
+│   │   │   │   ├── execution/
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   ├── trade_blueprint.py              # MarketThesis, TradeBlueprint, RiskVerdict, BracketOrderTicket
+│   │   │   │   │   └── shadow_order.py                 # ShadowOrder, BarrierTouchResult, PostSLAutopsyPath
+│   │   │   │   └── memory/
+│   │   │   │       ├── __init__.py
+│   │   │   │       └── episodic_case.py                # EpisodicCase (2-Tier), CohortBaseRateSummary, StratifiedMemoryPack
+│   │   │   └── services/                               # Bounded Sub-Domain Services (Option B)
+│   │   │       ├── __init__.py
+│   │   │       ├── quant/
+│   │   │       │   ├── __init__.py
+│   │   │       │   ├── microstructure_math.py          # VPIN, Kyle Lambda, OFI/OBI pure math formulas
+│   │   │       │   ├── regime_detector.py              # Regime detection, Shannon entropy, Hurst estimator
+│   │   │       │   ├── fracdiff_transformer.py         # Fractional differentiation weights & memory expansion
+│   │   │       │   ├── alpha_ast_validator.py          # Pure AST validation against look-ahead & disallowed ops
+│   │   │       │   ├── ic_gatekeeper.py                # 4-stage gatekeeper for candidate alphas
+│   │   │       │   ├── packet_assembler.py             # Pure packing of 16D trajectory vectors
+│   │   │       │   ├── barrier_labeler.py              # Symmetrical Directional Triple-Barrier Labeling
+│   │   │       │   ├── sample_weight_calc.py           # López de Prado sample uniqueness & return weighting
+│   │   │       │   └── coherence_gate.py               # Dual-binary probability coherence & conflict attenuation
+│   │   │       ├── risk/
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── risk_calculator.py              # Fee-to-Edge Gate, Uncertainty Quarter-Kelly, Correlation Cap, DD Breaker
+│   │   │       └── execution/
+│   │   │           ├── __init__.py
+│   │   │           ├── playbook_validator.py           # Precondition verification for 4 Pre-Verified Playbooks
+│   │   │           └── barrier_evaluator.py            # Triple-barrier exit evaluation & MAE/MFE on 1m sequence
+│   │   │
+│   │   ├── ports/                                      # === DOMAIN PORTS (Protocol / ABC Interfaces) ===
 │   │   │   ├── __init__.py
-│   │   │   ├── risk_calculator.py                  # Fee-to-Edge Gate, Uncertainty Quarter-Kelly, Correlation Cap, DD Breaker
-│   │   │   ├── playbook_validator.py               # Kiểm tra điều kiện biên bằng code cho 4 Pre-Verified Playbooks
-│   │   │   └── barrier_evaluator.py                # Logic xét chạm biên Triple-Barrier & tính MAE/MFE trên chuỗi 1m
-│   │   └── ports/
+│   │   │   ├── market_data_port.py                     # Interface đọc/ghi nến, OI, Funding, Parquet
+│   │   │   ├── quant_engine_port.py                    # Interface tính SemanticQuantPacket & Symbolic Alphas
+│   │   │   ├── alpha_dsl_port.py                       # Interface biên dịch & kiểm tra biểu thức Alpha DSL
+│   │   │   ├── feature_store_port.py                   # Interface lưu trữ & truy xuất chuỗi đặc trưng
+│   │   │   ├── causal_model_port.py                    # Protocol dự báo Dual-Binary Causal GBDT & SHAP
+│   │   │   ├── ood_detector_port.py                    # Protocol phát hiện Out-of-Distribution (Conformal Subspace)
+│   │   │   ├── calibrator_port.py                      # Protocol hiệu chuẩn xác suất (Fast Tabulated Venn-Abers)
+│   │   │   ├── agent_gateway_port.py                   # Interface gọi 9router có kiểm soát Rate-Limit & Structured Output
+│   │   │   ├── memory_repository_port.py               # Interface truy xuất k-NN Cohort (K=20) & 6 Stratified Lessons
+│   │   │   ├── execution_gateway_port.py               # Interface đặt lệnh Bracket Order (Live / Testnet / Paper)
+│   │   │   └── notification_port.py                    # Interface gửi báo cáo & nhận lệnh điều khiển Telegram
+│   │   │
+│   │   ├── application/                                # === TẦNG 2: APPLICATION USE CASES (Điều phối nghiệp vụ) ===
+│   │   │   ├── __init__.py
+│   │   │   ├── dto/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── cycle_report_dto.py                 # DTO tổng hợp kết quả chu kỳ 30m gửi ra Telegram & DB
+│   │   │   └── use_cases/
+│   │   │       ├── __init__.py
+│   │   │       ├── run_30m_trading_cycle.py            # Điều phối BTC-Lead Cascade -> ML -> 3 Agents -> Risk -> Execution/Shadow
+│   │   │       ├── evaluate_open_and_shadow_orders.py  # Quét nến 1m cập nhật MAE/MFE, chạm biên TP/SL & theo dõi Post-SL
+│   │   │       ├── reflect_and_update_memory.py        # Chạy Post-Mortem Judge tạo EpisodicCase 2 tầng & cập nhật Confidence
+│   │   │       ├── run_weekend_alpha_mining.py         # Chạy Math Agent + 4-Stage Gatekeeper + Champion/Challenger
+│   │   │       └── handle_emergency_controls.py        # Xử lý Kill-Switch, Breakeven SL, Pause/Resume, Promote Model
+│   │   │
+│   │   ├── infrastructure/                             # === TẦNG 3: INFRASTRUCTURE (Triển khai kỹ thuật chi tiết) ===
+│   │   │   ├── __init__.py
+│   │   │   ├── quant_engine/
+│   │   │   │   ├── AGENTS.md                           # [Rule Quant Engine] Bắt buộc Causal Polars/Numba, cấm shift(-k)
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── microstructure.py                   # VPIN, OFI, OBI, Kyle's Lambda, Taker CVD Z-Score
+│   │   │   │   ├── regime_physics.py                   # Hurst (Numba R/S), Garman-Klass Vol, Shannon Entropy, FracDiff
+│   │   │   │   ├── derivatives_alpha.py                # OI x Price 4-Quadrant, Funding Z-Score, BTC Lead-Lag Beta
+│   │   │   │   ├── symbolic_dsl.py                     # Trình biên dịch & kiểm định biểu thức Polars AST (WorldQuant + Math Agent)
+│   │   │   │   └── packet_builder.py                   # Lọc Rolling 30d Rank IC >= 0.015 & đóng gói SemanticQuantPacket
+│   │   │   ├── ml/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── dataset/
+│   │   │   │   │   ├── purged_kfold.py                 # Purged K-Fold Cross-Validation & Dynamic Memory Embargo
+│   │   │   │   │   └── parquet_dataset_sync.py         # Nạp 210,432 mẫu 30m từ data/parquet/
+│   │   │   │   ├── models/
+│   │   │   │   │   ├── ridge_oof_prior.py              # Out-of-Fold 5-Fold Stacking Logistic Ridge Prior
+│   │   │   │   │   └── monotonic_lightgbm.py           # Shallow LightGBM với khóa đơn điệu & 4 cụm tương tác nhân quả
+│   │   │   │   ├── ood/
+│   │   │   │   │   └── conformal_mahalanobis.py        # 6D Subspace Ledoit-Wolf + Conformal Quantile Threshold
+│   │   │   │   ├── calibration/
+│   │   │   │   │   └── fast_venn_abers.py              # Pre-Tabulated 500-Point Venn-Abers Calibrator (O(log K) < 0.05ms)
+│   │   │   │   └── explainability/
+│   │   │   │       └── native_treeshap.py              # Native LightGBM C++ pred_contrib TreeSHAP Extractor (< 1ms)
+│   │   │   ├── agents/
+│   │   │   │   ├── AGENTS.md                           # [Rule Agents] Bắt buộc qua Rate-Limit Governor, Structured Pydantic
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── rate_limit_governor.py              # Bộ điều phối Sliding-Window RPM/TPM/RPD/Interval trên Redis
+│   │   │   │   ├── ninerouter_client.py                # Adapter gọi 9router, tách thẻ <think>, tự phục hồi JSON Schema
+│   │   │   │   ├── macro_news_sentinel.py              # Dịch vụ nền canh lịch CPI/FOMC & lọc tin SimHash vào SharedMacroCache
+│   │   │   │   ├── scout_agent.py                      # Agent 1: Market Scout (Khớp 4 Playbooks)
+│   │   │   │   ├── architect_agent.py                  # Agent 2: Trade Architect (Tối ưu Entry 15m & SL theo Cohort MAE)
+│   │   │   │   ├── arbiter_agent.py                    # Agent 3: Semantic Risk Arbiter (Kiểm toán IC & phản biện)
+│   │   │   │   ├── post_mortem_agent.py                # Giải phẫu lệnh đóng/lệnh ảo tạo EpisodicCase 2 tầng
+│   │   │   │   └── math_alpha_agent.py                 # Weekend Math Agent sinh công thức Symbolic AST
+│   │   │   ├── binance/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── ws_micro_ingestor.py                # Nhận luồng aggTrade, depth20@100ms, kline_1m, forceOrder -> gom nến 1m
+│   │   │   │   ├── futures_rest_gateway.py             # Đặt lệnh Bracket Order (Entry + Hard SL + TP), lấy OI & Funding
+│   │   │   │   ├── historical_backfiller.py            # Tải ZIP từ data.binance.vision & đồng bộ Parquet
+│   │   │   │   └── paper_simulator.py                  # Khớp lệnh giả lập có tính phí & trượt giá Kyle's Lambda trên nến 1m
+│   │   │   └── persistence/
+│   │   │       ├── __init__.py
+│   │   │       ├── database.py                         # AsyncPG / SQLAlchemy Async Engine kết nối TimescaleDB
+│   │   │       ├── redis_store.py                      # Quản lý trạng thái WebSocket, SharedMacroCache & Quota
+│   │   │       ├── market_data_repo.py                 # Đọc/ghi Hypertables & đồng bộ Parquet Feature Store
+│   │   │       └── pgvector_memory_repo.py             # Truy xuất k-NN Cohort (K=20) & 6 Stratified Multi-Bucket Cases
+│   │   │
+│   │   ├── adapters/                                   # === INTER-LAYER ADAPTERS (Kết nối Ports & Infra) ===
+│   │   │   ├── __init__.py
+│   │   │   ├── persistence/
+│   │   │   ├── binance/
+│   │   │   ├── telegram/
+│   │   │   └── quant_engine/
+│   │   │
+│   │   └── interfaces/                                 # === TẦNG 4: PRESENTATION & ENTRYPOINT ===
 │   │       ├── __init__.py
-│   │       ├── market_data_port.py                 # Interface đọc/ghi nến, OI, Funding, Parquet
-│   │       ├── quant_engine_port.py                # Interface tính SemanticQuantPacket & Symbolic Alphas
-│   │       ├── ml_model_port.py                    # Interface dự báo Dual-Binary Causal GBDT & SHAP
-│   │       ├── agent_gateway_port.py               # Interface gọi 9router có kiểm soát Rate-Limit & Structured Output
-│   │       ├── memory_repository_port.py           # Interface truy xuất k-NN Cohort (K=20) & 6 Stratified Lessons
-│   │       ├── execution_gateway_port.py           # Interface đặt lệnh Bracket Order (Live / Testnet / Paper)
-│   │       └── notification_port.py                # Interface gửi báo cáo & nhận lệnh điều khiển Telegram
+│   │       ├── telegram/
+│   │       │   ├── __init__.py
+│   │       │   ├── bot_controller.py                   # Xử lý /status, /quota, /mode, /positions, /shadow, /panic_close
+│   │       │   ├── keyboards.py                        # Inline Keyboards (Kill-Switch, Breakeven SL, Approve Challenger)
+│   │       │   └── formatters.py                       # Render báo cáo nến 30m, SHAP, Cohort 20-Case & Debate Digest
+│   │       ├── scheduler/
+│   │       │   ├── __init__.py
+│   │       │   └── orchestrator_loop.py                # Nhịp đóng nến 30m, quét lệnh 1m, Macro Sentinel 5m, Math Agent Chủ Nhật
+│   │       └── main.py                                 # Dependency Injection Wiring & Khởi động toàn hệ thống
 │   │
-│   ├── application/                                # === TẦNG 2: APPLICATION USE CASES (Điều phối nghiệp vụ) ===
-│   │   ├── __init__.py
-│   │   ├── dto/
-│   │   │   ├── __init__.py
-│   │   │   └── cycle_report_dto.py                 # DTO tổng hợp kết quả chu kỳ 30m gửi ra Telegram & DB
-│   │   └── use_cases/
-│   │       ├── __init__.py
-│   │       ├── run_30m_trading_cycle.py            # Điều phối BTC-Lead Cascade -> ML -> 3 Agents -> Risk -> Execution/Shadow
-│   │       ├── evaluate_open_and_shadow_orders.py  # Quét nến 1m cập nhật MAE/MFE, chạm biên TP/SL & theo dõi Post-SL
-│   │       ├── reflect_and_update_memory.py        # Chạy Post-Mortem Judge tạo EpisodicCase 2 tầng & cập nhật Confidence
-│   │       ├── run_weekend_alpha_mining.py         # Chạy Math Agent + 4-Stage Gatekeeper + Champion/Challenger
-│   │       └── handle_emergency_controls.py        # Xử lý Kill-Switch, Breakeven SL, Pause/Resume, Promote Model
-│   │
-│   ├── infrastructure/                             # === TẦNG 3: INFRASTRUCTURE (Triển khai kỹ thuật chi tiết) ===
-│   │   ├── __init__.py
-│   │   ├── quant_engine/
-│   │   │   ├── AGENTS.md                           # [Rule Quant Engine] Bắt buộc Causal Polars/Numba, cấm shift(-k)
-│   │   │   ├── __init__.py
-│   │   │   ├── microstructure.py                   # VPIN, OFI, OBI, Kyle's Lambda, Taker CVD Z-Score
-│   │   │   ├── regime_physics.py                   # Hurst (Numba R/S), Yang-Zhang Vol, Shannon Entropy, FracDiff
-│   │   │   ├── derivatives_alpha.py                # OI x Price 4-Quadrant, Funding Z-Score, BTC Lead-Lag Beta
-│   │   │   ├── symbolic_dsl.py                     # Trình biên dịch & kiểm định biểu thức Polars AST (WorldQuant + Math Agent)
-│   │   │   └── packet_builder.py                   # Lọc Rolling 30d Rank IC >= 0.015 & đóng gói SemanticQuantPacket
-│   │   ├── ml/
-│   │   │   ├── __init__.py
-│   │   │   ├── triple_barrier_labeler.py           # Gán nhãn y_long_win, y_short_win có trừ phí & trượt giá trên nến 1m
-│   │   │   ├── purged_cv.py                        # Purged K-Fold Cross-Validation & Embargo
-│   │   │   ├── mahalanobis_ood.py                  # Ledoit-Wolf Mahalanobis Out-of-Distribution Detector
-│   │   │   ├── venn_abers.py                       # Inductive Venn-Abers Calibrator (P_cal + Uncertainty Width)
-│   │   │   ├── dual_binary_gbdt.py                 # Long Model & Short Model (Ridge Prior + Monotonic LightGBM/CatBoost)
-│   │   │   └── shap_explainer.py                   # Trích xuất Economic-Locked TreeSHAP
-│   │   ├── agents/
-│   │   │   ├── AGENTS.md                           # [Rule Agents] Bắt buộc qua Rate-Limit Governor, Structured Pydantic
-│   │   │   ├── __init__.py
-│   │   │   ├── rate_limit_governor.py              # Bộ điều phối Sliding-Window RPM/TPM/RPD/Interval trên Redis
-│   │   │   ├── ninerouter_client.py                # Adapter gọi 9router, tách thẻ <think>, tự phục hồi JSON Schema
-│   │   │   ├── macro_news_sentinel.py              # Dịch vụ nền canh lịch CPI/FOMC & lọc tin SimHash vào SharedMacroCache
-│   │   │   ├── scout_agent.py                      # Agent 1: Market Scout (Khớp 4 Playbooks)
-│   │   │   ├── architect_agent.py                  # Agent 2: Trade Architect (Tối ưu Entry 15m & SL theo Cohort MAE)
-│   │   │   ├── arbiter_agent.py                    # Agent 3: Semantic Risk Arbiter (Kiểm toán IC & phản biện)
-│   │   │   ├── post_mortem_agent.py                # Giải phẫu lệnh đóng/lệnh ảo tạo EpisodicCase 2 tầng
-│   │   │   └── math_alpha_agent.py                 # Weekend Math Agent sinh công thức Symbolic AST
-│   │   ├── binance/
-│   │   │   ├── __init__.py
-│   │   │   ├── ws_micro_ingestor.py                # Nhận luồng aggTrade, depth20@100ms, kline_1m, forceOrder -> gom nến 1m
-│   │   │   ├── futures_rest_gateway.py             # Đặt lệnh Bracket Order (Entry + Hard SL + TP), lấy OI & Funding
-│   │   │   ├── historical_backfiller.py            # Tải ZIP từ data.binance.vision & đồng bộ Parquet
-│   │   │   └── paper_simulator.py                  # Khớp lệnh giả lập có tính phí & trượt giá Kyle's Lambda trên nến 1m
-│   │   └── persistence/
-│   │       ├── __init__.py
-│   │       ├── database.py                         # AsyncPG / SQLAlchemy Async Engine kết nối TimescaleDB
-│   │       ├── redis_store.py                      # Quản lý trạng thái WebSocket, SharedMacroCache & Quota
-│   │       ├── market_data_repo.py                 # Đọc/ghi Hypertables & đồng bộ Parquet Feature Store
-│   │       └── pgvector_memory_repo.py             # Truy xuất k-NN Cohort (K=20) & 6 Stratified Multi-Bucket Cases
-│   │
-│   └── presentation/                               # === TẦNG 4: PRESENTATION & ENTRYPOINT ===
-│       ├── __init__.py
-│       ├── telegram/
-│       │   ├── __init__.py
-│       │   ├── bot_controller.py                   # Xử lý /status, /quota, /mode, /positions, /shadow, /panic_close
-│       │   ├── keyboards.py                        # Inline Keyboards (Kill-Switch, Breakeven SL, Approve Challenger)
-│       │   └── formatters.py                       # Render báo cáo nến 30m, SHAP, Cohort 20-Case & Debate Digest
-│       ├── scheduler/
-│       │   ├── __init__.py
-│       │   └── orchestrator_loop.py                # Nhịp đóng nến 30m, quét lệnh 1m, Macro Sentinel 5m, Math Agent Chủ Nhật
-│       └── main.py                                 # Dependency Injection Wiring & Khởi động toàn hệ thống
+│   └── __init__.py
 │
 └── tests/
-    ├── conftest.py                                 # Fixtures dữ liệu nến mẫu, mock Redis/9router/Binance
+    ├── conftest.py                                     # Fixtures dữ liệu nến mẫu, mock Redis/9router/Binance
     ├── unit/
-    │   ├── test_domain_risk_and_playbooks.py       # Test công thức Quarter-Kelly, Fee Gate, 4 Playbooks, Drawdown Breaker
-    │   ├── test_quant_no_lookahead.py              # Test bất biến thời gian (Zero Look-ahead) cho Quant Engine & Symbolic AST
-    │   ├── test_causal_ml_monotonicity.py          # Test khóa đơn điệu Long/Short Model, Mahalanobis OOD, Venn-Abers
-    │   ├── test_rate_limit_governor.py             # Test giới hạn RPM/TPM/RPD/min_interval_ms và tự xoay vòng API
-    │   └── test_cohort_memory_and_autopsy.py       # Test thống kê K=20 Cohort, chia 6 Bucket & phát hiện Stop-Hunt
+    │   ├── test_domain_risk_and_playbooks.py           # Test công thức Quarter-Kelly, Fee Gate, 4 Playbooks, Drawdown Breaker
+    │   ├── test_quant_no_lookahead.py                  # Test bất biến thời gian (Zero Look-ahead) cho Quant Engine & Symbolic AST
+    │   ├── test_causal_ml_monotonicity.py              # Test khóa đơn điệu Long/Short Model, Mahalanobis OOD, Venn-Abers
+    │   ├── test_rate_limit_governor.py                 # Test giới hạn RPM/TPM/RPD/min_interval_ms và tự xoay vòng API
+    │   └── test_cohort_memory_and_autopsy.py           # Test thống kê K=20 Cohort, chia 6 Bucket & phát hiện Stop-Hunt
+    ├── property/
+    │   └── test_purged_kfold_leakage.py                # Hypothesis property test kiểm tra 0% rò rỉ dữ liệu qua Folds
     └── integration/
-        └── test_full_30m_cycle_paper.py            # Test luồng End-to-End từ nến 30m -> ML -> 3 Agents -> Paper Bracket Order
+        └── test_full_30m_cycle_paper.py                # Test luồng End-to-End từ nến 30m -> ML -> 3 Agents -> Paper Bracket Order
+```
 ```
 
 ---
@@ -250,61 +311,50 @@ asyncio_mode = "auto"
 # 4. CẤU HÌNH IMPORT-LINTER (KHÓA CỨNG RANH GIỚI CLEAN ARCHITECTURE)
 # =====================================================================
 [tool.importlinter]
-root_packages = ["src"]
+root_packages = ["trading_bot"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Contract 1: Strict Layered Clean Architecture (Presentation -> Infrastructure/Application -> Domain)"
-type = "layers"
-layers = [
-    "src.presentation",
-    "src.infrastructure",
-    "src.application",
-    "src.domain",
-]
-
-[[tool.importlinter.contracts]]
-name = "Contract 2: Pure Domain Isolation (Cấm Domain import thư viện I/O, ML hoặc DataFrame)"
+name = "domain_is_pure"
 type = "forbidden"
-source_modules = ["src.domain"]
+source_modules = ["trading_bot.domain"]
 forbidden_modules = [
-    "src.application",
-    "src.infrastructure",
-    "src.presentation",
-    "polars",
-    "lightgbm",
-    "catboost",
-    "shap",
-    "httpx",
-    "websockets",
-    "asyncpg",
-    "redis",
-    "telegram",
+    "trading_bot.ports",
+    "trading_bot.application",
+    "trading_bot.adapters",
+    "trading_bot.infrastructure",
+    "trading_bot.interfaces",
 ]
 
 [[tool.importlinter.contracts]]
-name = "Contract 3: Application Layer Purity (Application chỉ được phụ thuộc vào Domain)"
+name = "ports_depend_only_on_domain"
 type = "forbidden"
-source_modules = ["src.application"]
+source_modules = ["trading_bot.ports"]
 forbidden_modules = [
-    "src.infrastructure",
-    "src.presentation",
-    "httpx",
-    "websockets",
-    "asyncpg",
-    "redis",
-    "telegram",
+    "trading_bot.application",
+    "trading_bot.adapters",
+    "trading_bot.infrastructure",
+    "trading_bot.interfaces",
 ]
 
 [[tool.importlinter.contracts]]
-name = "Contract 4: Infrastructure Submodule Independence (Các adapter hạ tầng không gọi chéo nhau)"
+name = "application_depends_only_on_domain_and_ports"
+type = "forbidden"
+source_modules = ["trading_bot.application"]
+forbidden_modules = [
+    "trading_bot.adapters",
+    "trading_bot.infrastructure",
+    "trading_bot.interfaces",
+]
+
+[[tool.importlinter.contracts]]
+name = "adapters_isolation"
 type = "independence"
 modules = [
-    "src.infrastructure.quant_engine",
-    "src.infrastructure.ml",
-    "src.infrastructure.agents",
-    "src.infrastructure.binance",
-    "src.infrastructure.persistence",
+    "trading_bot.adapters.persistence",
+    "trading_bot.adapters.binance",
+    "trading_bot.adapters.telegram",
+    "trading_bot.adapters.quant_engine",
 ]
 ```
 
@@ -319,9 +369,9 @@ Theo cơ chế khám phá của Antigravity, khi Agent mở hoặc sửa một f
 # Global Project Rules — LLM_trading_bot_v2
 
 ## 1. Kiến Trúc Cốt Lõi (Clean Architecture)
-- Dự án tuân thủ nghiêm ngặt Clean Architecture 4 tầng: `src/domain` <- `src/application` <- `src/infrastructure` <- `src/presentation`.
-- Mọi giao tiếp giữa `application` và `infrastructure` BẮT BUỘC đi qua các Interfaces (`Protocol` / `ABC`) định nghĩa tại `src/domain/ports/`.
-- Tuyệt đối không phá vỡ các hợp đồng trong `[tool.importlinter]` của `pyproject.toml`.
+- Dự án tuân thủ nghiêm ngặt Clean Architecture 4 tầng: `src/trading_bot/domain/` <- `src/trading_bot/ports/` <- `src/trading_bot/application/` <- `src/trading_bot/adapters/` & `infrastructure/` & `interfaces/`.
+- Mọi giao tiếp giữa các tầng BẮT BUỘC đi qua các Domain Ports (`Protocol` / `ABC`) định nghĩa tại `src/trading_bot/ports/`.
+- Tuyệt đối giữ vững 100% 4 hợp đồng `[tool.importlinter]` trong `pyproject.toml` (`domain_is_pure`, `ports_depend_only_on_domain`, `application_depends_only_on_domain_and_ports`, `adapters_isolation`).
 
 ## 2. Quy Tắc Thép: CẤM HARDCODE & CẤM GÁN DỮ LIỆU MẶC ĐỊNH (Fail-Fast Discipline)
 1. **Cấm Tham Số Mặc Định Trong Hàm & Method (`No Default Parameters`):**
@@ -339,7 +389,7 @@ Theo cơ chế khám phá của Antigravity, khi Agent mở hoặc sửa một f
    - Cấm nhúng trực tiếp các con số ngưỡng định lượng (như `0.55`, `0.015`, `60000`, `1.5`), tên mã coin, URL hay tên model vào thân hàm nghiệp vụ. Tất cả phải được nạp từ `config/settings.yaml`, `config/rate_limits.yaml`, hoặc `config/alpha_zoo_seed.yaml`.
 
 ## 3. Nguyên Tắc Định Lượng & AI Bất Biến
-- **Zero LLM Math:** LLM (`Scout`, `Trade Architect`, `Risk Arbiter`, `Math Agent`) KHÔNG BAO GIỜ tự tính chỉ số kỹ thuật, xác suất hay khối lượng lệnh. Toàn bộ tính toán số học phải nằm ở `src/domain/services/` hoặc `src/infrastructure/quant_engine/`.
+- **Zero LLM Math:** LLM (`Scout`, `Trade Architect`, `Risk Arbiter`, `Math Agent`) KHÔNG BAO GIỜ tự tính chỉ số kỹ thuật, xác suất hay khối lượng lệnh. Toàn bộ tính toán số học phải nằm ở `src/trading_bot/domain/services/` hoặc `src/trading_bot/infrastructure/quant_engine/`.
 - **Zero Look-Ahead Bias:** Mọi phép tính trên chuỗi thời gian (`Polars`, `Numba`, `Symbolic DSL`) tại thời điểm `t` chỉ được phép truy cập dữ liệu `<= t`. Cấm tuyệt đối dùng `.shift(-k)` (với `k > 0`) hoặc chuẩn hóa toàn cục (`global mean/std`) trong tính toán đặc trưng; chỉ dùng cửa sổ trượt nhân quả (`rolling_*`, `ewm_*`).
 
 ## 4. Quy Trình Kiểm Định 5 Bước Bắt Buộc (`verify_loop`)
@@ -348,14 +398,27 @@ Theo cơ chế khám phá của Antigravity, khi Agent mở hoặc sửa một f
 - Không bao giờ báo cáo hoàn thành công việc nếu bất kỳ bước nào trong 5 bước (`ruff`, `pyright`, `check_no_defaults_or_hardcode`, `lint-imports`, `pytest`) còn báo lỗi.
 ```
 
-### 3.2. File Tầng Domain: `/src/domain/AGENTS.md`
+### 3.2. File Tầng Domain: `/src/trading_bot/domain/AGENTS.md`
 ```markdown
-# Domain Layer Rules (`src/domain/`)
+# Domain Layer Rules (`src/trading_bot/domain/`)
 
 1. **100% Pure Python & Pydantic:**
-   - Trong `src/domain/`, chỉ được phép import thư viện chuẩn Python (`math`, `enum`, `typing`, `dataclasses`, `datetime`, `abc`, `uuid`) và `pydantic`.
+   - Trong `src/trading_bot/domain/`, chỉ được phép import thư viện chuẩn Python (`math`, `enum`, `typing`, `dataclasses`, `datetime`, `abc`, `uuid`) và `pydantic`.
    - CẤM import `polars`, `numpy`, `lightgbm`, `catboost`, `httpx`, `redis`, `asyncpg`, `telegram`.
-2. **Cấm Tuyệt Đối Default Values & Hardcode Trong Entities / Services:**
+2. **Cấu Trúc Bounded Sub-Domains Chuẩn Option B:**
+   - Entities được phân nhóm tường minh theo nghiệp vụ dưới `src/trading_bot/domain/entities/`:
+     - `common/`: Primitive types & Enums chia sẻ toàn hệ thống (`enums.py`).
+     - `market/`: Trạng thái nến & vi cấu trúc thị trường (`market_state.py`).
+     - `quant/`: Feature vectors, cấu hình quant, DSL AST, nhãn ML & OOD metrics (`quant_configs.py`, `quant_features.py`, `alpha_dsl.py`, `ml_prediction.py`, `ood_status.py`, `barrier_label.py`, `alpha_candidate.py`).
+     - `risk/`: Trạng thái tài khoản & ký quỹ (`account_state.py`).
+     - `execution/`: Kế hoạch giao dịch & lệnh ảo (`trade_blueprint.py`, `shadow_order.py`).
+     - `memory/`: Ký ức bài học kinh nghiệm (`episodic_case.py`).
+   - Domain Services được phân nhóm tường minh dưới `src/trading_bot/domain/services/`:
+     - `quant/`: Dịch vụ định lượng thuần túy (`microstructure_math.py`, `regime_detector.py`, `fracdiff_transformer.py`, `alpha_ast_validator.py`, `ic_gatekeeper.py`, `packet_assembler.py`, `barrier_labeler.py`, `sample_weight_calc.py`, `coherence_gate.py`).
+     - `risk/`: Dịch vụ định cỡ vị thế & quản trị rủi ro (`risk_calculator.py`).
+     - `execution/`: Dịch vụ thẩm định playbook & rào chắn (`playbook_validator.py`, `barrier_evaluator.py`).
+   - Tuyệt đối cấm tạo file stub, re-export alias hoặc module rỗng để tương thích ngược. Mọi import phải trỏ trực tiếp đến đường dẫn Option B.
+3. **Cấm Tuyệt Đối Default Values & Hardcode Trong Entities / Services:**
    - Mọi trường trong `BaseModel` (`RiskConfig`, `SizingResult`, `MarketThesis`, `TradeBlueprint`, `EpisodicCase`) đều là **Required Fields** (không gán `= ...`).
    - Mọi ngưỡng tính toán trong `risk_calculator.py` và `playbook_validator.py` phải lấy từ `self.cfg.<field_name>`, tuyệt đối không viết số hằng trực tiếp trong câu lệnh `if`.
 ```
@@ -446,9 +509,9 @@ description: >-
 # New Clean Architecture Slice Runbook (`new-clean-slice`)
 
 Luôn triển khai tính năng mới theo đúng 4 bước từ trong ra ngoài:
-1. **Bước 1 (`src/domain/`):** Định nghĩa Entity/ValueObject bằng `Pydantic BaseModel` (tất cả các trường đều bắt buộc, không gán giá trị mặc định) trong `src/domain/entities/` và khai báo `Protocol` Interface trong `src/domain/ports/`.
-2. **Bước 2 (`src/application/`):** Viết UseCase trong `src/application/use_cases/` nhận các `Port` và `Config` qua constructor (Dependency Injection).
-3. **Bước 3 (`src/infrastructure/`):** Viết class Adapter thực thi `Port` trong thư mục con tương ứng của `src/infrastructure/`.
+1. **Bước 1 (`src/trading_bot/domain/`):** Định nghĩa Entity bằng `Pydantic BaseModel` (tất cả các trường đều bắt buộc, không gán giá trị mặc định) trong `src/trading_bot/domain/entities/<subgroup>/` và khai báo `Protocol` Interface trong `src/trading_bot/ports/`.
+2. **Bước 2 (`src/trading_bot/application/`):** Viết UseCase trong `src/trading_bot/application/use_cases/` nhận các `Port` và `Config` qua constructor (Dependency Injection).
+3. **Bước 3 (`src/trading_bot/adapters/` hoặc `infrastructure/`):** Viết class Adapter thực thi `Port` trong thư mục con tương ứng của `src/trading_bot/adapters/` hoặc `infrastructure/`.
 4. **Bước 4 (`tests/`):** Viết Unit Test cho UseCase và chạy `verify-loop`.
 ```
 
@@ -672,9 +735,9 @@ Write-Host "=== ALL 5 VERIFICATION GATES PASSED 100% ===" -ForegroundColor Green
 
 ---
 
-## 5. Đặc Tả Code Tầng 1: Core Domain Entities, Services & Ports (`src/domain/`) — Tuân Thủ 100% Zero Default & Zero Hardcode
+## 5. Đặc Tả Code Tầng 1: Core Domain Entities & Services Theo Option B Bounded Sub-Domains (`src/trading_bot/domain/`) — Tuân Thủ 100% Invariant #9
 
-### 5.1. Enum Chuẩn Hóa Nghiệp Vụ (`src/domain/entities/enums.py`)
+### 5.1. Enum Chuẩn Hóa Nghiệp Vụ (`src/trading_bot/domain/entities/common/enums.py`)
 
 ```python
 from enum import Enum
@@ -735,7 +798,7 @@ class ExecutionMode(str, Enum):
     LIVE = "LIVE"
 ```
 
-### 5.2. Domain Service: Quản Trị Rủi Ro Định Lượng (`src/domain/services/risk_calculator.py`)
+### 5.2. Domain Service: Quản Trị Rủi Ro Định Lượng (`src/trading_bot/domain/services/risk/risk_calculator.py`)
 
 Mọi trường trong `RiskConfig` và `SizingResult`, cũng như mọi tham số trong `DeterministicRiskCalculator` đều **bắt buộc truyền tường minh 100% (không có giá trị mặc định, không có hằng số hardcode trong logic)**:
 
@@ -935,5 +998,5 @@ class DeterministicRiskCalculator:
 
 - [ ] Khởi tạo `uv init` & cài đặt toàn bộ dependencies trong `pyproject.toml`.
 - [ ] Tạo đầy đủ 4 file `AGENTS.md`, 3 Skills trong `.agents/skills/`, `scripts/check_no_defaults_or_hardcode.py` và `.agents/hooks.json`.
-- [ ] Viết toàn bộ Entities, Services (`DeterministicRiskCalculator`, `PlaybookValidator`, `BarrierEvaluator`) và Ports trong `src/domain/` tuân thủ 100% quy tắc không tham số mặc định và không hardcode.
+- [ ] Viết toàn bộ Entities, Services (`risk_calculator.py`, `playbook_validator.py`, `barrier_evaluator.py`, v.v.) theo cấu trúc Bounded Sub-Domains Option B và Ports trong `src/trading_bot/ports/` tuân thủ 100% quy tắc không tham số mặc định và không hardcode (Invariant #9).
 - [ ] Viết `tests/unit/test_domain_risk_and_playbooks.py` và chạy `powershell -ExecutionPolicy Bypass -File ./scripts/verify_loop.ps1` vượt qua cả 5 cổng 100%.

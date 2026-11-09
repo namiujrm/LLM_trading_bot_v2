@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from trading_bot.adapters.persistence.database import DatabaseManager
-from trading_bot.domain.entities.account_state import (
+from trading_bot.domain.entities.common.enums import ExecutionMode, TradeSide
+from trading_bot.domain.entities.risk.account_state import (
     AccountPortfolioContext,
     ActivePositionSnapshot,
     PendingOrderSnapshot,
 )
-from trading_bot.domain.entities.enums import ExecutionMode, TradeSide
-from trading_bot.domain.services.risk_calculator import DeterministicRiskCalculator
+from trading_bot.domain.services.risk.risk_calculator import DeterministicRiskCalculator
 
 
 class AccountPortfolioRepository:

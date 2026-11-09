@@ -14,7 +14,10 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent
     src_dir = repo_root / "src"
 
-    if not src_dir.exists() or not any(src_dir.rglob("*.py")):
+    if not src_dir.exists():
+        print(json.dumps({"decision": "allow"}))
+        return
+    if not any(src_dir.rglob("*.py")):
         print(json.dumps({"decision": "allow"}))
         return
 

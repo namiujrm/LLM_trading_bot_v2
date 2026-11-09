@@ -6,7 +6,7 @@ import math
 
 from pydantic import BaseModel
 
-from trading_bot.domain.entities.account_state import (
+from trading_bot.domain.entities.risk.account_state import (
     AccountPortfolioContext,
     ActivePositionSnapshot,
 )

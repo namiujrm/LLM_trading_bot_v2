@@ -1,0 +1,925 @@
+{
+  "generated_at": "2026-11-09T06:06:19.023754+00:00",
+  "total_test_samples": 139808,
+  "policies_evaluated": 14,
+  "results": [
+    {
+      "policy_name": "Baseline",
+      "description": "Production Baseline: Decision Threshold 0.52, Unconstrained",
+      "threshold": 0.52,
+      "fee_to_edge_mult": null,
+      "max_uncertainty": null,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 5055,
+        "win_rate": 0.4698,
+        "profit_factor": 0.9548,
+        "sharpe_ratio": -2.4509,
+        "max_drawdown_pct": 178.49,
+        "cumulative_return": -1.0262,
+        "gross_return": 4.0288,
+        "fee_drag": 5.055,
+        "mean_return_bps": -2.03
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 999,
+          "win_rate": 0.4464,
+          "profit_factor": 0.8416,
+          "sharpe_ratio": -9.1745,
+          "max_drawdown_pct": 76.21,
+          "cumulative_return": -0.5878,
+          "gross_return": 0.4112,
+          "fee_drag": 0.999,
+          "mean_return_bps": -5.88
+        },
+        "ETHUSDT": {
+          "trade_count": 773,
+          "win_rate": 0.4838,
+          "profit_factor": 0.9885,
+          "sharpe_ratio": -0.6204,
+          "max_drawdown_pct": 34.44,
+          "cumulative_return": -0.0368,
+          "gross_return": 0.7362,
+          "fee_drag": 0.773,
+          "mean_return_bps": -0.48
+        },
+        "SOLUSDT": {
+          "trade_count": 2359,
+          "win_rate": 0.4799,
+          "profit_factor": 1.003,
+          "sharpe_ratio": 0.1615,
+          "max_drawdown_pct": 65.15,
+          "cumulative_return": 0.0353,
+          "gross_return": 2.3943,
+          "fee_drag": 2.359,
+          "mean_return_bps": 0.15
+        },
+        "BNBUSDT": {
+          "trade_count": 924,
+          "win_rate": 0.4578,
+          "profit_factor": 0.8962,
+          "sharpe_ratio": -5.9722,
+          "max_drawdown_pct": 67.27,
+          "cumulative_return": -0.4369,
+          "gross_return": 0.4871,
+          "fee_drag": 0.924,
+          "mean_return_bps": -4.73
+        }
+      }
+    },
+    {
+      "policy_name": "Threshold_054",
+      "description": "Decision Threshold Sweep: 0.54 Filter",
+      "threshold": 0.54,
+      "fee_to_edge_mult": null,
+      "max_uncertainty": null,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 2034,
+        "win_rate": 0.4656,
+        "profit_factor": 0.9318,
+        "sharpe_ratio": -3.7179,
+        "max_drawdown_pct": 92.39,
+        "cumulative_return": -0.6141,
+        "gross_return": 1.4199,
+        "fee_drag": 2.034,
+        "mean_return_bps": -3.02
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 403,
+          "win_rate": 0.4988,
+          "profit_factor": 1.0431,
+          "sharpe_ratio": 2.2421,
+          "max_drawdown_pct": 13.22,
+          "cumulative_return": 0.0586,
+          "gross_return": 0.4616,
+          "fee_drag": 0.403,
+          "mean_return_bps": 1.45
+        },
+        "ETHUSDT": {
+          "trade_count": 319,
+          "win_rate": 0.4639,
+          "profit_factor": 0.9041,
+          "sharpe_ratio": -5.4628,
+          "max_drawdown_pct": 35.13,
+          "cumulative_return": -0.1448,
+          "gross_return": 0.1742,
+          "fee_drag": 0.319,
+          "mean_return_bps": -4.54
+        },
+        "SOLUSDT": {
+          "trade_count": 676,
+          "win_rate": 0.4822,
+          "profit_factor": 1.0475,
+          "sharpe_ratio": 2.3941,
+          "max_drawdown_pct": 44.06,
+          "cumulative_return": 0.1529,
+          "gross_return": 0.8289,
+          "fee_drag": 0.676,
+          "mean_return_bps": 2.26
+        },
+        "BNBUSDT": {
+          "trade_count": 636,
+          "win_rate": 0.4277,
+          "profit_factor": 0.7666,
+          "sharpe_ratio": -14.5584,
+          "max_drawdown_pct": 74.88,
+          "cumulative_return": -0.6809,
+          "gross_return": -0.0449,
+          "fee_drag": 0.636,
+          "mean_return_bps": -10.71
+        }
+      }
+    },
+    {
+      "policy_name": "Threshold_056",
+      "description": "Decision Threshold Sweep: 0.56 Filter",
+      "threshold": 0.56,
+      "fee_to_edge_mult": null,
+      "max_uncertainty": null,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 811,
+        "win_rate": 0.4871,
+        "profit_factor": 1.0225,
+        "sharpe_ratio": 1.1607,
+        "max_drawdown_pct": 30.46,
+        "cumulative_return": 0.0826,
+        "gross_return": 0.8936,
+        "fee_drag": 0.811,
+        "mean_return_bps": 1.02
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 207,
+          "win_rate": 0.5362,
+          "profit_factor": 1.2409,
+          "sharpe_ratio": 11.6383,
+          "max_drawdown_pct": 10.67,
+          "cumulative_return": 0.1641,
+          "gross_return": 0.3711,
+          "fee_drag": 0.207,
+          "mean_return_bps": 7.93
+        },
+        "ETHUSDT": {
+          "trade_count": 143,
+          "win_rate": 0.5175,
+          "profit_factor": 1.109,
+          "sharpe_ratio": 5.5127,
+          "max_drawdown_pct": 10.81,
+          "cumulative_return": 0.0691,
+          "gross_return": 0.2121,
+          "fee_drag": 0.143,
+          "mean_return_bps": 4.83
+        },
+        "SOLUSDT": {
+          "trade_count": 95,
+          "win_rate": 0.5474,
+          "profit_factor": 1.2945,
+          "sharpe_ratio": 14.4797,
+          "max_drawdown_pct": 19.11,
+          "cumulative_return": 0.2093,
+          "gross_return": 0.3043,
+          "fee_drag": 0.095,
+          "mean_return_bps": 22.04
+        },
+        "BNBUSDT": {
+          "trade_count": 366,
+          "win_rate": 0.4317,
+          "profit_factor": 0.7802,
+          "sharpe_ratio": -13.5716,
+          "max_drawdown_pct": 41.22,
+          "cumulative_return": -0.36,
+          "gross_return": 0.006,
+          "fee_drag": 0.366,
+          "mean_return_bps": -9.84
+        }
+      }
+    },
+    {
+      "policy_name": "Threshold_058",
+      "description": "Decision Threshold Sweep: 0.58 Filter",
+      "threshold": 0.58,
+      "fee_to_edge_mult": null,
+      "max_uncertainty": null,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 510,
+        "win_rate": 0.4961,
+        "profit_factor": 1.0615,
+        "sharpe_ratio": 3.1148,
+        "max_drawdown_pct": 28.2,
+        "cumulative_return": 0.1414,
+        "gross_return": 0.6514,
+        "fee_drag": 0.51,
+        "mean_return_bps": 2.77
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 145,
+          "win_rate": 0.5517,
+          "profit_factor": 1.2445,
+          "sharpe_ratio": 11.8358,
+          "max_drawdown_pct": 10.49,
+          "cumulative_return": 0.1226,
+          "gross_return": 0.2676,
+          "fee_drag": 0.145,
+          "mean_return_bps": 8.45
+        },
+        "ETHUSDT": {
+          "trade_count": 100,
+          "win_rate": 0.5,
+          "profit_factor": 1.0545,
+          "sharpe_ratio": 2.9237,
+          "max_drawdown_pct": 12.7,
+          "cumulative_return": 0.025,
+          "gross_return": 0.125,
+          "fee_drag": 0.1,
+          "mean_return_bps": 2.5
+        },
+        "SOLUSDT": {
+          "trade_count": 73,
+          "win_rate": 0.5753,
+          "profit_factor": 1.4611,
+          "sharpe_ratio": 20.892,
+          "max_drawdown_pct": 18.64,
+          "cumulative_return": 0.2322,
+          "gross_return": 0.3052,
+          "fee_drag": 0.073,
+          "mean_return_bps": 31.81
+        },
+        "BNBUSDT": {
+          "trade_count": 192,
+          "win_rate": 0.4219,
+          "profit_factor": 0.7142,
+          "sharpe_ratio": -19.0507,
+          "max_drawdown_pct": 27.34,
+          "cumulative_return": -0.2384,
+          "gross_return": -0.0464,
+          "fee_drag": 0.192,
+          "mean_return_bps": -12.41
+        }
+      }
+    },
+    {
+      "policy_name": "Threshold_060",
+      "description": "Decision Threshold Sweep: 0.60 Filter",
+      "threshold": 0.6,
+      "fee_to_edge_mult": null,
+      "max_uncertainty": null,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 158,
+        "win_rate": 0.4557,
+        "profit_factor": 1.0492,
+        "sharpe_ratio": 2.4474,
+        "max_drawdown_pct": 21.9,
+        "cumulative_return": 0.0432,
+        "gross_return": 0.2012,
+        "fee_drag": 0.158,
+        "mean_return_bps": 2.74
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 13,
+          "win_rate": 0.4615,
+          "profit_factor": 1.3048,
+          "sharpe_ratio": 14.7589,
+          "max_drawdown_pct": 1.46,
+          "cumulative_return": 0.0105,
+          "gross_return": 0.0235,
+          "fee_drag": 0.013,
+          "mean_return_bps": 8.06
+        },
+        "ETHUSDT": {
+          "trade_count": 43,
+          "win_rate": 0.4186,
+          "profit_factor": 0.7421,
+          "sharpe_ratio": -16.698,
+          "max_drawdown_pct": 11.68,
+          "cumulative_return": -0.0593,
+          "gross_return": -0.0163,
+          "fee_drag": 0.043,
+          "mean_return_bps": -13.8
+        },
+        "SOLUSDT": {
+          "trade_count": 57,
+          "win_rate": 0.5965,
+          "profit_factor": 1.5915,
+          "sharpe_ratio": 25.0738,
+          "max_drawdown_pct": 18.64,
+          "cumulative_return": 0.224,
+          "gross_return": 0.281,
+          "fee_drag": 0.057,
+          "mean_return_bps": 39.3
+        },
+        "BNBUSDT": {
+          "trade_count": 45,
+          "win_rate": 0.3111,
+          "profit_factor": 0.4396,
+          "sharpe_ratio": -48.3919,
+          "max_drawdown_pct": 16.66,
+          "cumulative_return": -0.1319,
+          "gross_return": -0.0869,
+          "fee_drag": 0.045,
+          "mean_return_bps": -29.32
+        }
+      }
+    },
+    {
+      "policy_name": "FeeEdge_10",
+      "description": "Fee-to-Edge Gate: Multiplier 1.0x Cost (Threshold 0.52)",
+      "threshold": 0.52,
+      "fee_to_edge_mult": 1.0,
+      "max_uncertainty": null,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 1893,
+        "win_rate": 0.4828,
+        "profit_factor": 0.999,
+        "sharpe_ratio": -0.0514,
+        "max_drawdown_pct": 56.03,
+        "cumulative_return": -0.0107,
+        "gross_return": 1.8823,
+        "fee_drag": 1.893,
+        "mean_return_bps": -0.06
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 289,
+          "win_rate": 0.5363,
+          "profit_factor": 1.2486,
+          "sharpe_ratio": 11.8036,
+          "max_drawdown_pct": 12.25,
+          "cumulative_return": 0.2935,
+          "gross_return": 0.5825,
+          "fee_drag": 0.289,
+          "mean_return_bps": 10.15
+        },
+        "ETHUSDT": {
+          "trade_count": 276,
+          "win_rate": 0.4783,
+          "profit_factor": 0.9671,
+          "sharpe_ratio": -1.7949,
+          "max_drawdown_pct": 28.4,
+          "cumulative_return": -0.0509,
+          "gross_return": 0.2251,
+          "fee_drag": 0.276,
+          "mean_return_bps": -1.84
+        },
+        "SOLUSDT": {
+          "trade_count": 858,
+          "win_rate": 0.4907,
+          "profit_factor": 1.0281,
+          "sharpe_ratio": 1.498,
+          "max_drawdown_pct": 54.46,
+          "cumulative_return": 0.1622,
+          "gross_return": 1.0202,
+          "fee_drag": 0.858,
+          "mean_return_bps": 1.89
+        },
+        "BNBUSDT": {
+          "trade_count": 470,
+          "win_rate": 0.4383,
+          "profit_factor": 0.8428,
+          "sharpe_ratio": -9.3617,
+          "max_drawdown_pct": 45.89,
+          "cumulative_return": -0.4155,
+          "gross_return": 0.0545,
+          "fee_drag": 0.47,
+          "mean_return_bps": -8.84
+        }
+      }
+    },
+    {
+      "policy_name": "FeeEdge_15",
+      "description": "Fee-to-Edge Gate: Multiplier 1.5x Cost (Threshold 0.52)",
+      "threshold": 0.52,
+      "fee_to_edge_mult": 1.5,
+      "max_uncertainty": null,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 898,
+        "win_rate": 0.4833,
+        "profit_factor": 1.0254,
+        "sharpe_ratio": 1.3471,
+        "max_drawdown_pct": 40.59,
+        "cumulative_return": 0.1565,
+        "gross_return": 1.0545,
+        "fee_drag": 0.898,
+        "mean_return_bps": 1.74
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 143,
+          "win_rate": 0.5455,
+          "profit_factor": 1.2773,
+          "sharpe_ratio": 13.2229,
+          "max_drawdown_pct": 13.58,
+          "cumulative_return": 0.1731,
+          "gross_return": 0.3161,
+          "fee_drag": 0.143,
+          "mean_return_bps": 12.1
+        },
+        "ETHUSDT": {
+          "trade_count": 160,
+          "win_rate": 0.5062,
+          "profit_factor": 1.1691,
+          "sharpe_ratio": 8.3822,
+          "max_drawdown_pct": 26.84,
+          "cumulative_return": 0.157,
+          "gross_return": 0.317,
+          "fee_drag": 0.16,
+          "mean_return_bps": 9.81
+        },
+        "SOLUSDT": {
+          "trade_count": 339,
+          "win_rate": 0.4897,
+          "profit_factor": 1.0344,
+          "sharpe_ratio": 1.8553,
+          "max_drawdown_pct": 50.66,
+          "cumulative_return": 0.0999,
+          "gross_return": 0.4389,
+          "fee_drag": 0.339,
+          "mean_return_bps": 2.95
+        },
+        "BNBUSDT": {
+          "trade_count": 256,
+          "win_rate": 0.4258,
+          "profit_factor": 0.8383,
+          "sharpe_ratio": -9.7892,
+          "max_drawdown_pct": 36.4,
+          "cumulative_return": -0.2735,
+          "gross_return": -0.0175,
+          "fee_drag": 0.256,
+          "mean_return_bps": -10.68
+        }
+      }
+    },
+    {
+      "policy_name": "FeeEdge_20",
+      "description": "Fee-to-Edge Gate: Multiplier 2.0x Cost (Threshold 0.52)",
+      "threshold": 0.52,
+      "fee_to_edge_mult": 2.0,
+      "max_uncertainty": null,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 469,
+        "win_rate": 0.5096,
+        "profit_factor": 1.0912,
+        "sharpe_ratio": 4.7357,
+        "max_drawdown_pct": 34.85,
+        "cumulative_return": 0.3289,
+        "gross_return": 0.7979,
+        "fee_drag": 0.469,
+        "mean_return_bps": 7.01
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 75,
+          "win_rate": 0.5733,
+          "profit_factor": 1.3118,
+          "sharpe_ratio": 14.7148,
+          "max_drawdown_pct": 13.88,
+          "cumulative_return": 0.1166,
+          "gross_return": 0.1916,
+          "fee_drag": 0.075,
+          "mean_return_bps": 15.54
+        },
+        "ETHUSDT": {
+          "trade_count": 92,
+          "win_rate": 0.4674,
+          "profit_factor": 1.0955,
+          "sharpe_ratio": 4.9715,
+          "max_drawdown_pct": 19.23,
+          "cumulative_return": 0.056,
+          "gross_return": 0.148,
+          "fee_drag": 0.092,
+          "mean_return_bps": 6.09
+        },
+        "SOLUSDT": {
+          "trade_count": 177,
+          "win_rate": 0.5254,
+          "profit_factor": 1.1402,
+          "sharpe_ratio": 7.3175,
+          "max_drawdown_pct": 27.68,
+          "cumulative_return": 0.2389,
+          "gross_return": 0.4159,
+          "fee_drag": 0.177,
+          "mean_return_bps": 13.5
+        },
+        "BNBUSDT": {
+          "trade_count": 125,
+          "win_rate": 0.48,
+          "profit_factor": 0.912,
+          "sharpe_ratio": -5.198,
+          "max_drawdown_pct": 28.54,
+          "cumulative_return": -0.0826,
+          "gross_return": 0.0424,
+          "fee_drag": 0.125,
+          "mean_return_bps": -6.61
+        }
+      }
+    },
+    {
+      "policy_name": "Uncertainty_Gated_010",
+      "description": "Venn-Abers Uncertainty Gating: Max Uncertainty <= 0.10 (Threshold 0.56)",
+      "threshold": 0.56,
+      "fee_to_edge_mult": null,
+      "max_uncertainty": 0.1,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 699,
+        "win_rate": 0.4764,
+        "profit_factor": 0.9766,
+        "sharpe_ratio": -1.2614,
+        "max_drawdown_pct": 30.29,
+        "cumulative_return": -0.0732,
+        "gross_return": 0.6258,
+        "fee_drag": 0.699,
+        "mean_return_bps": -1.05
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 170,
+          "win_rate": 0.5294,
+          "profit_factor": 1.2221,
+          "sharpe_ratio": 10.7258,
+          "max_drawdown_pct": 11.35,
+          "cumulative_return": 0.1293,
+          "gross_return": 0.2993,
+          "fee_drag": 0.17,
+          "mean_return_bps": 7.6
+        },
+        "ETHUSDT": {
+          "trade_count": 121,
+          "win_rate": 0.5207,
+          "profit_factor": 1.1497,
+          "sharpe_ratio": 7.5886,
+          "max_drawdown_pct": 12.65,
+          "cumulative_return": 0.0786,
+          "gross_return": 0.1996,
+          "fee_drag": 0.121,
+          "mean_return_bps": 6.5
+        },
+        "SOLUSDT": {
+          "trade_count": 54,
+          "win_rate": 0.5556,
+          "profit_factor": 1.2423,
+          "sharpe_ratio": 12.3355,
+          "max_drawdown_pct": 11.93,
+          "cumulative_return": 0.0967,
+          "gross_return": 0.1507,
+          "fee_drag": 0.054,
+          "mean_return_bps": 17.91
+        },
+        "BNBUSDT": {
+          "trade_count": 354,
+          "win_rate": 0.4237,
+          "profit_factor": 0.7665,
+          "sharpe_ratio": -14.5765,
+          "max_drawdown_pct": 43.16,
+          "cumulative_return": -0.3778,
+          "gross_return": -0.0238,
+          "fee_drag": 0.354,
+          "mean_return_bps": -10.67
+        }
+      }
+    },
+    {
+      "policy_name": "Combined_Policy_A",
+      "description": "Combined Policy A: Threshold 0.56 + FeeEdge 1.5x + Unc <= 0.10",
+      "threshold": 0.56,
+      "fee_to_edge_mult": 1.5,
+      "max_uncertainty": 0.1,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 421,
+        "win_rate": 0.4774,
+        "profit_factor": 0.9689,
+        "sharpe_ratio": -1.7543,
+        "max_drawdown_pct": 31.01,
+        "cumulative_return": -0.0741,
+        "gross_return": 0.3469,
+        "fee_drag": 0.421,
+        "mean_return_bps": -1.76
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 97,
+          "win_rate": 0.567,
+          "profit_factor": 1.2583,
+          "sharpe_ratio": 12.7163,
+          "max_drawdown_pct": 13.43,
+          "cumulative_return": 0.1062,
+          "gross_return": 0.2032,
+          "fee_drag": 0.097,
+          "mean_return_bps": 10.95
+        },
+        "ETHUSDT": {
+          "trade_count": 87,
+          "win_rate": 0.4943,
+          "profit_factor": 1.1127,
+          "sharpe_ratio": 5.8837,
+          "max_drawdown_pct": 12.75,
+          "cumulative_return": 0.0488,
+          "gross_return": 0.1358,
+          "fee_drag": 0.087,
+          "mean_return_bps": 5.6
+        },
+        "SOLUSDT": {
+          "trade_count": 53,
+          "win_rate": 0.566,
+          "profit_factor": 1.2739,
+          "sharpe_ratio": 13.7754,
+          "max_drawdown_pct": 11.51,
+          "cumulative_return": 0.1066,
+          "gross_return": 0.1596,
+          "fee_drag": 0.053,
+          "mean_return_bps": 20.11
+        },
+        "BNBUSDT": {
+          "trade_count": 184,
+          "win_rate": 0.3967,
+          "profit_factor": 0.7076,
+          "sharpe_ratio": -19.9275,
+          "max_drawdown_pct": 37.58,
+          "cumulative_return": -0.3356,
+          "gross_return": -0.1516,
+          "fee_drag": 0.184,
+          "mean_return_bps": -18.24
+        }
+      }
+    },
+    {
+      "policy_name": "Combined_Policy_B",
+      "description": "Combined Policy B: Threshold 0.56 + FeeEdge 2.0x + Unc <= 0.10 (4 Pairs)",
+      "threshold": 0.56,
+      "fee_to_edge_mult": 2.0,
+      "max_uncertainty": 0.1,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 266,
+        "win_rate": 0.515,
+        "profit_factor": 1.104,
+        "sharpe_ratio": 5.5278,
+        "max_drawdown_pct": 16.47,
+        "cumulative_return": 0.1685,
+        "gross_return": 0.4345,
+        "fee_drag": 0.266,
+        "mean_return_bps": 6.33
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 61,
+          "win_rate": 0.5902,
+          "profit_factor": 1.442,
+          "sharpe_ratio": 19.8873,
+          "max_drawdown_pct": 10.26,
+          "cumulative_return": 0.1156,
+          "gross_return": 0.1766,
+          "fee_drag": 0.061,
+          "mean_return_bps": 18.95
+        },
+        "ETHUSDT": {
+          "trade_count": 61,
+          "win_rate": 0.459,
+          "profit_factor": 1.0888,
+          "sharpe_ratio": 4.6728,
+          "max_drawdown_pct": 12.44,
+          "cumulative_return": 0.0297,
+          "gross_return": 0.0907,
+          "fee_drag": 0.061,
+          "mean_return_bps": 4.86
+        },
+        "SOLUSDT": {
+          "trade_count": 45,
+          "win_rate": 0.5556,
+          "profit_factor": 1.2486,
+          "sharpe_ratio": 12.7078,
+          "max_drawdown_pct": 11.51,
+          "cumulative_return": 0.0885,
+          "gross_return": 0.1335,
+          "fee_drag": 0.045,
+          "mean_return_bps": 19.67
+        },
+        "BNBUSDT": {
+          "trade_count": 99,
+          "win_rate": 0.4848,
+          "profit_factor": 0.9021,
+          "sharpe_ratio": -6.0484,
+          "max_drawdown_pct": 17.27,
+          "cumulative_return": -0.0653,
+          "gross_return": 0.0337,
+          "fee_drag": 0.099,
+          "mean_return_bps": -6.6
+        }
+      }
+    },
+    {
+      "policy_name": "Combined_Policy_C",
+      "description": "Combined Policy C: Threshold 0.56 + FeeEdge 2.0x (Unconstrained Unc, 4 Pairs)",
+      "threshold": 0.56,
+      "fee_to_edge_mult": 2.0,
+      "max_uncertainty": null,
+      "allowed_symbols": null,
+      "portfolio_metrics": {
+        "trade_count": 320,
+        "win_rate": 0.525,
+        "profit_factor": 1.165,
+        "sharpe_ratio": 8.4195,
+        "max_drawdown_pct": 19.16,
+        "cumulative_return": 0.3283,
+        "gross_return": 0.6483,
+        "fee_drag": 0.32,
+        "mean_return_bps": 10.26
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 66,
+          "win_rate": 0.5909,
+          "profit_factor": 1.46,
+          "sharpe_ratio": 20.6687,
+          "max_drawdown_pct": 10.26,
+          "cumulative_return": 0.1281,
+          "gross_return": 0.1941,
+          "fee_drag": 0.066,
+          "mean_return_bps": 19.41
+        },
+        "ETHUSDT": {
+          "trade_count": 70,
+          "win_rate": 0.4571,
+          "profit_factor": 1.0696,
+          "sharpe_ratio": 3.6937,
+          "max_drawdown_pct": 10.09,
+          "cumulative_return": 0.0284,
+          "gross_return": 0.0984,
+          "fee_drag": 0.07,
+          "mean_return_bps": 4.06
+        },
+        "SOLUSDT": {
+          "trade_count": 82,
+          "win_rate": 0.561,
+          "profit_factor": 1.3537,
+          "sharpe_ratio": 17.0926,
+          "max_drawdown_pct": 19.11,
+          "cumulative_return": 0.2246,
+          "gross_return": 0.3066,
+          "fee_drag": 0.082,
+          "mean_return_bps": 27.39
+        },
+        "BNBUSDT": {
+          "trade_count": 102,
+          "win_rate": 0.5,
+          "profit_factor": 0.9207,
+          "sharpe_ratio": -4.8149,
+          "max_drawdown_pct": 17.27,
+          "cumulative_return": -0.0529,
+          "gross_return": 0.0491,
+          "fee_drag": 0.102,
+          "mean_return_bps": -5.19
+        }
+      }
+    },
+    {
+      "policy_name": "Core_3Pair_Policy_B",
+      "description": "Optimized Core 3-Pair (BTC+ETH+SOL): Threshold 0.56 + FeeEdge 2.0x + Unc <= 0.10",
+      "threshold": 0.56,
+      "fee_to_edge_mult": 2.0,
+      "max_uncertainty": 0.1,
+      "allowed_symbols": [
+        "BTCUSDT",
+        "ETHUSDT",
+        "SOLUSDT"
+      ],
+      "portfolio_metrics": {
+        "trade_count": 167,
+        "win_rate": 0.5329,
+        "profit_factor": 1.2456,
+        "sharpe_ratio": 11.9343,
+        "max_drawdown_pct": 12.97,
+        "cumulative_return": 0.2338,
+        "gross_return": 0.4008,
+        "fee_drag": 0.167,
+        "mean_return_bps": 14.0
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 61,
+          "win_rate": 0.5902,
+          "profit_factor": 1.442,
+          "sharpe_ratio": 19.8873,
+          "max_drawdown_pct": 10.26,
+          "cumulative_return": 0.1156,
+          "gross_return": 0.1766,
+          "fee_drag": 0.061,
+          "mean_return_bps": 18.95
+        },
+        "ETHUSDT": {
+          "trade_count": 61,
+          "win_rate": 0.459,
+          "profit_factor": 1.0888,
+          "sharpe_ratio": 4.6728,
+          "max_drawdown_pct": 12.44,
+          "cumulative_return": 0.0297,
+          "gross_return": 0.0907,
+          "fee_drag": 0.061,
+          "mean_return_bps": 4.86
+        },
+        "SOLUSDT": {
+          "trade_count": 45,
+          "win_rate": 0.5556,
+          "profit_factor": 1.2486,
+          "sharpe_ratio": 12.7078,
+          "max_drawdown_pct": 11.51,
+          "cumulative_return": 0.0885,
+          "gross_return": 0.1335,
+          "fee_drag": 0.045,
+          "mean_return_bps": 19.67
+        },
+        "BNBUSDT": {
+          "trade_count": 0,
+          "win_rate": 0.0,
+          "profit_factor": 1.0,
+          "sharpe_ratio": 0.0,
+          "max_drawdown_pct": 0.0,
+          "cumulative_return": 0.0,
+          "gross_return": 0.0,
+          "fee_drag": 0.0,
+          "mean_return_bps": 0.0
+        }
+      }
+    },
+    {
+      "policy_name": "Core_3Pair_Policy_C",
+      "description": "Optimized Core 3-Pair (BTC+ETH+SOL): Threshold 0.56 + FeeEdge 2.0x",
+      "threshold": 0.56,
+      "fee_to_edge_mult": 2.0,
+      "max_uncertainty": null,
+      "allowed_symbols": [
+        "BTCUSDT",
+        "ETHUSDT",
+        "SOLUSDT"
+      ],
+      "portfolio_metrics": {
+        "trade_count": 218,
+        "win_rate": 0.5367,
+        "profit_factor": 1.2882,
+        "sharpe_ratio": 13.7079,
+        "max_drawdown_pct": 19.11,
+        "cumulative_return": 0.3812,
+        "gross_return": 0.5992,
+        "fee_drag": 0.218,
+        "mean_return_bps": 17.48
+      },
+      "symbol_metrics": {
+        "BTCUSDT": {
+          "trade_count": 66,
+          "win_rate": 0.5909,
+          "profit_factor": 1.46,
+          "sharpe_ratio": 20.6687,
+          "max_drawdown_pct": 10.26,
+          "cumulative_return": 0.1281,
+          "gross_return": 0.1941,
+          "fee_drag": 0.066,
+          "mean_return_bps": 19.41
+        },
+        "ETHUSDT": {
+          "trade_count": 70,
+          "win_rate": 0.4571,
+          "profit_factor": 1.0696,
+          "sharpe_ratio": 3.6937,
+          "max_drawdown_pct": 10.09,
+          "cumulative_return": 0.0284,
+          "gross_return": 0.0984,
+          "fee_drag": 0.07,
+          "mean_return_bps": 4.06
+        },
+        "SOLUSDT": {
+          "trade_count": 82,
+          "win_rate": 0.561,
+          "profit_factor": 1.3537,
+          "sharpe_ratio": 17.0926,
+          "max_drawdown_pct": 19.11,
+          "cumulative_return": 0.2246,
+          "gross_return": 0.3066,
+          "fee_drag": 0.082,
+          "mean_return_bps": 27.39
+        },
+        "BNBUSDT": {
+          "trade_count": 0,
+          "win_rate": 0.0,
+          "profit_factor": 1.0,
+          "sharpe_ratio": 0.0,
+          "max_drawdown_pct": 0.0,
+          "cumulative_return": 0.0,
+          "gross_return": 0.0,
+          "fee_drag": 0.0,
+          "mean_return_bps": 0.0
+        }
+      }
+    }
+  ]
+}

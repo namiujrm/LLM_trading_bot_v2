@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from trading_bot.adapters.persistence.database import DatabaseManager
-from trading_bot.domain.entities.account_state import AccountPortfolioContext
-from trading_bot.domain.entities.market_state import MicroBar1m, MultiTFBar
+from trading_bot.domain.entities.market.market_state import MicroBar1m, MultiTFBar
+from trading_bot.domain.entities.risk.account_state import AccountPortfolioContext
 from trading_bot.ports.market_data_port import MarketDataPort
 
 
