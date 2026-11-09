@@ -28,10 +28,25 @@ def create_sample_binance_zip() -> bytes:
     return buffer.getvalue()
 
 
+def create_sample_binance_zip_with_header() -> bytes:
+    """Create a sample Binance Vision monthly klines ZIP archive with real header in memory."""
+    csv_content = (
+        "open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,taker_buy_quote_volume,ignore\n"
+        "1704067200000,42000.0,42050.0,41980.0,42020.0,10.5,1704067259999,441210.0,150,5.2,218504.0,0\n"
+        "1704067260000,42020.0,42080.0,42010.0,42070.0,12.0,1704067319999,504840.0,180,7.0,294490.0,0\n"
+        "1704067320000,42070.0,42090.0,42040.0,42060.0,8.5,1704067379999,357510.0,110,3.5,147210.0,0\n"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("BTCUSDT-1m-2024-01.csv", csv_content)
+    return buffer.getvalue()
+
+
 def test_historical_backfiller_url_builders() -> None:
     backfiller = HistoricalBackfiller(
         base_vision_url="https://data.binance.vision",
         persister=None,
+        pool=None,
     )
     m_url = backfiller.build_monthly_url("BTCUSDT", "1m", 2024, 1)
     assert (
@@ -50,16 +65,21 @@ def test_historical_backfiller_ram_stream_and_polars_parsing(tmp_path: Path) -> 
     backfiller = HistoricalBackfiller(
         base_vision_url="https://data.binance.vision",
         persister=None,
+        pool=None,
     )
     zip_bytes = create_sample_binance_zip()
 
-    # 1. Parse in memory without temporary files
+    # 1. Parse in memory without temporary files (headerless CSV)
     df = backfiller.parse_zip_to_polars(zip_bytes, "BTCUSDT")
     assert df.height == 3
     assert "symbol" in df.columns
     assert "ofi_sum" in df.columns
     assert "spread_bps_mean" in df.columns
     assert df["close"][0] == 42020.0
+    # Microstructure reconstruction checks
+    # OFI = 2 * 5.2 - 10.5 = -0.1
+    assert abs(df["ofi_sum"][0] - (-0.1)) < 1e-6
+    assert df["spread_bps_mean"][0] >= 0.5
 
     # 2. Prepare tuples for binary copy
     records = backfiller.prepare_records_for_copy(df)
@@ -75,6 +95,24 @@ def test_historical_backfiller_ram_stream_and_polars_parsing(tmp_path: Path) -> 
     read_back = pl.read_parquet(parquet_file)
     assert read_back.height == 3
     assert read_back["close"][1] == 42070.0
+
+
+def test_historical_backfiller_adaptive_header_sniffer(tmp_path: Path) -> None:
+    backfiller = HistoricalBackfiller(
+        base_vision_url="https://data.binance.vision",
+        persister=None,
+        pool=None,
+    )
+    zip_bytes = create_sample_binance_zip_with_header()
+
+    # Parse in memory with header row present
+    df = backfiller.parse_zip_to_polars(zip_bytes, "BTCUSDT")
+    assert df.height == 3
+    assert df["symbol"][0] == "BTCUSDT"
+    assert df["trade_count"][0] == 150
+    assert df["taker_buy_vol"][0] == 5.2
+    assert abs(df["ofi_sum"][0] - (-0.1)) < 1e-6
+    assert df["spread_bps_mean"][0] >= 0.5
 
 
 def test_micro_accumulator_ofi_and_obi_computation() -> None:

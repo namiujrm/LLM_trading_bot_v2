@@ -13,8 +13,8 @@ from trading_bot.adapters.persistence.pgvector_memory_repo import (
     PgvectorMemoryRepository,
     build_16d_regime_trajectory_vector,
 )
-from trading_bot.domain.entities.enums import OutcomeCategory
-from trading_bot.domain.entities.episodic_case import EpisodicCase
+from trading_bot.domain.entities.common.enums import OutcomeCategory
+from trading_bot.domain.entities.memory.episodic_case import EpisodicCase
 from trading_bot.infrastructure.config_schemas import DatabaseConfig
 
 
@@ -61,7 +61,7 @@ async def test_pgvector_memory_repo_upsert_query_and_boost() -> None:
     repo = PgvectorMemoryRepository(db)
 
     try:
-        playbook = f"PB_TEST_{int(time.time())}"
+        playbook = f"PB_TEST_{uuid.uuid4().hex}"
         now_ms = int(time.time() * 1000)
 
         # Base vector

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from trading_bot.domain.entities.account_state import AccountPortfolioContext
-from trading_bot.domain.entities.market_state import MicroBar1m, MultiTFBar
+from trading_bot.domain.entities.market.market_state import MicroBar1m, MultiTFBar
+from trading_bot.domain.entities.risk.account_state import AccountPortfolioContext
 
 
 @runtime_checkable

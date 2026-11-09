@@ -5,7 +5,7 @@ from __future__ import annotations
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from trading_bot.domain.services.risk_calculator import (
+from trading_bot.domain.services.risk.risk_calculator import (
     DeterministicRiskCalculator,
     RiskConfig,
 )

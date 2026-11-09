@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from trading_bot.domain.entities.enums import MarketRegime, OIPriceQuadrant
+from trading_bot.domain.entities.common.enums import MarketRegime, OIPriceQuadrant
 
 
 class MicroBar1m(BaseModel):
@@ -14,6 +14,17 @@ class MicroBar1m(BaseModel):
     low: float
     close: float
     volume: float
+
+
+class EnrichedMicroBar1m(BaseModel):
+    timestamp_ms: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    taker_buy_volume: float
+    quote_volume: float
 
 
 class MultiTFBar(BaseModel):
@@ -41,3 +52,4 @@ class SemanticQuantPacket(BaseModel):
     active_features: list[FeatureSignalItem]
     market_regime: MarketRegime
     oi_quadrant: OIPriceQuadrant
+    trajectory_vector_16d: list[float]

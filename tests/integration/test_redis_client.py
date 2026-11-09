@@ -8,8 +8,8 @@ import time
 import pytest
 
 from trading_bot.adapters.persistence.redis_client import RedisClient
-from trading_bot.domain.entities.account_state import AccountPortfolioContext
-from trading_bot.domain.entities.enums import ExecutionMode
+from trading_bot.domain.entities.common.enums import ExecutionMode
+from trading_bot.domain.entities.risk.account_state import AccountPortfolioContext
 from trading_bot.infrastructure.config_schemas import RedisConfig
 
 

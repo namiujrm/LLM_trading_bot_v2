@@ -5,9 +5,9 @@ from __future__ import annotations
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from trading_bot.domain.entities.enums import OutcomeCategory, TradeSide
-from trading_bot.domain.entities.market_state import MicroBar1m
-from trading_bot.domain.services.barrier_evaluator import BarrierConfig, BarrierEvaluator
+from trading_bot.domain.entities.common.enums import OutcomeCategory, TradeSide
+from trading_bot.domain.entities.market.market_state import MicroBar1m
+from trading_bot.domain.services.execution.barrier_evaluator import BarrierConfig, BarrierEvaluator
 
 CONFIG = BarrierConfig(
     max_holding_bars=15,

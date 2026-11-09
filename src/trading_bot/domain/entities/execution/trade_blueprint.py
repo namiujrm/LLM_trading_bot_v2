@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from trading_bot.domain.entities.enums import (
+from trading_bot.domain.entities.common.enums import (
     EntryOrderType,
     ExistingPositionDirective,
     PlaybookType,

@@ -11,8 +11,8 @@ from typing import Any
 import numpy as np
 
 from trading_bot.adapters.persistence.database import DatabaseManager
-from trading_bot.domain.entities.enums import OutcomeCategory
-from trading_bot.domain.entities.episodic_case import (
+from trading_bot.domain.entities.common.enums import OutcomeCategory
+from trading_bot.domain.entities.memory.episodic_case import (
     CohortBaseRateSummary,
     EpisodicCase,
     StratifiedMemoryPack,

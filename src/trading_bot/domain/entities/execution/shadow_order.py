@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from trading_bot.domain.entities.enums import OutcomeCategory
-from trading_bot.domain.entities.trade_blueprint import TradeBlueprint
+from trading_bot.domain.entities.common.enums import OutcomeCategory
+from trading_bot.domain.entities.execution.trade_blueprint import TradeBlueprint
 
 
 class BarrierTouchResult(BaseModel):

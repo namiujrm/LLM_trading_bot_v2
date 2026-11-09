@@ -4,12 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from trading_bot.domain.entities.account_state import (
-    AccountPortfolioContext,
-    ActivePositionSnapshot,
-    PendingOrderSnapshot,
-)
-from trading_bot.domain.entities.enums import (
+from trading_bot.domain.entities.common.enums import (
     EntryOrderType,
     ExecutionMode,
     ExistingPositionDirective,
@@ -20,15 +15,20 @@ from trading_bot.domain.entities.enums import (
     TradeSide,
     VetoCategory,
 )
-from trading_bot.domain.entities.market_state import MicroBar1m
-from trading_bot.domain.entities.trade_blueprint import RiskVerdict
-from trading_bot.domain.services.barrier_evaluator import BarrierConfig, BarrierEvaluator
-from trading_bot.domain.services.playbook_validator import (
+from trading_bot.domain.entities.execution.trade_blueprint import RiskVerdict
+from trading_bot.domain.entities.market.market_state import MicroBar1m
+from trading_bot.domain.entities.risk.account_state import (
+    AccountPortfolioContext,
+    ActivePositionSnapshot,
+    PendingOrderSnapshot,
+)
+from trading_bot.domain.services.execution.barrier_evaluator import BarrierConfig, BarrierEvaluator
+from trading_bot.domain.services.execution.playbook_validator import (
     PlaybookConfig,
     PlaybookPreconditionsInput,
     PlaybookValidator,
 )
-from trading_bot.domain.services.risk_calculator import (
+from trading_bot.domain.services.risk.risk_calculator import (
     DeterministicRiskCalculator,
     RiskConfig,
 )

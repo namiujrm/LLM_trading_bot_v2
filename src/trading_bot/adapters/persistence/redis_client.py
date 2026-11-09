@@ -6,8 +6,8 @@ from typing import Any
 
 import redis.asyncio as aioredis
 
-from trading_bot.domain.entities.account_state import AccountPortfolioContext
-from trading_bot.domain.entities.enums import ExecutionMode
+from trading_bot.domain.entities.common.enums import ExecutionMode
+from trading_bot.domain.entities.risk.account_state import AccountPortfolioContext
 from trading_bot.infrastructure.config_schemas import RedisConfig
 
 ACQUIRE_ROUTE_LUA = """

@@ -11,9 +11,9 @@ import pytest
 from trading_bot.adapters.persistence.account_portfolio_repo import AccountPortfolioRepository
 from trading_bot.adapters.persistence.database import DatabaseManager
 from trading_bot.adapters.persistence.market_data_repo import MarketDataRepository
-from trading_bot.domain.entities.account_state import AccountPortfolioContext
-from trading_bot.domain.entities.enums import ExecutionMode
-from trading_bot.domain.entities.market_state import MicroBar1m
+from trading_bot.domain.entities.common.enums import ExecutionMode
+from trading_bot.domain.entities.market.market_state import MicroBar1m
+from trading_bot.domain.entities.risk.account_state import AccountPortfolioContext
 from trading_bot.infrastructure.config_schemas import DatabaseConfig
 
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from trading_bot.domain.entities.enums import OIPriceQuadrant, PlaybookType, TradeSide
-from trading_bot.domain.services.playbook_validator import (
+from trading_bot.domain.entities.common.enums import OIPriceQuadrant, PlaybookType, TradeSide
+from trading_bot.domain.services.execution.playbook_validator import (
     PlaybookConfig,
     PlaybookPreconditionsInput,
     PlaybookValidator,
