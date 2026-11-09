@@ -206,6 +206,14 @@ CREATE TABLE IF NOT EXISTS quant_feature_vectors_30m (
     model_version           VARCHAR(64) NOT NULL,
     features_json           JSONB NOT NULL,
     shap_explanation_json   JSONB NOT NULL,
+    -- Stage 4 Causal ML Scalar Projections & Metrics
+    gamma_ood               DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    ood_threshold           DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    is_economic_consistent  BOOLEAN          NOT NULL DEFAULT TRUE,
+    p_long_raw              DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    p_short_raw             DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    is_coherent             BOOLEAN          NOT NULL DEFAULT TRUE,
+    coherence_penalty       DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     PRIMARY KEY (symbol, bar_time)
 );
 
@@ -215,6 +223,32 @@ SELECT create_hypertable(
     chunk_time_interval => INTERVAL '30 days',
     if_not_exists => TRUE
 );
+
+CREATE INDEX IF NOT EXISTS idx_quant_features_shap_gin
+    ON quant_feature_vectors_30m USING gin (shap_explanation_json);
+
+CREATE INDEX IF NOT EXISTS idx_quant_features_ood_drift
+    ON quant_feature_vectors_30m (symbol, is_ood_warning, gamma_ood, bar_time DESC);
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
+        ALTER TABLE quant_feature_vectors_30m SET (
+            timescaledb.compress,
+            timescaledb.compress_segmentby = 'symbol',
+            timescaledb.compress_orderby = 'bar_time DESC'
+        );
+
+        PERFORM add_compression_policy(
+            'quant_feature_vectors_30m',
+            INTERVAL '30 days',
+            if_not_exists => TRUE
+        );
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'Compression policy could not be attached: %', SQLERRM;
+END $$;
 
 -- ============================================================================
 -- BẢNG 3: LỆNH THẬT, PAPER & VỊ THẾ ACTIVE (orders_and_positions)

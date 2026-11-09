@@ -63,7 +63,10 @@ jobs:
       - name: Apply TimescaleDB Schema & Extensions
         run: |
           CONTAINER_ID=$(docker ps -q --filter ancestor=timescale/timescaledb-ha:pg16 | head -n 1)
-          docker exec -i "$CONTAINER_ID" psql -U postgres -d trading_bot_db < sql/001_init_schema.sql
+          for sql_file in $(ls -1 sql/*.sql | sort); do
+            echo "Applying $sql_file..."
+            docker exec -i "$CONTAINER_ID" psql -U postgres -d trading_bot_db < "$sql_file"
+          done
 
       - name: "Gate 1/5: Ruff Lint & Format"
         run: |
