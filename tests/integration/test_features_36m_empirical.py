@@ -25,6 +25,12 @@ SYMBOLS: tuple[str, ...] = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT")
 EXPECTED_ROWS_PER_SYMBOL: int = 52608
 EXPECTED_TOTAL_ROWS: int = 210432
 
+if not DATA_DIR.exists() or not (DATA_DIR / "BTCUSDT.parquet").is_file():
+    pytest.skip(
+        f"Empirical 36m dataset not found in {DATA_DIR}. Skipping empirical benchmark tests.",
+        allow_module_level=True,
+    )
+
 CANONICAL_FEATURES: tuple[str, ...] = (
     "hurst_exponent_100",
     "shannon_entropy_50",
