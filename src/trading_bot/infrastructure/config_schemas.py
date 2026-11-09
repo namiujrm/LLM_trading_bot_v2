@@ -41,6 +41,8 @@ class NinerouterConfig(BaseModel):
     base_url: str
     api_key: str
     timeout_seconds: float
+    fast_tier_model: str
+    deep_tier_model: str
 
 
 class TelegramConfig(BaseModel):
@@ -48,3 +50,12 @@ class TelegramConfig(BaseModel):
 
     bot_token: str
     chat_id: str
+
+
+class LoggingConfig(BaseModel):
+    """Structured logging configuration (Zero Defaults)."""
+
+    log_dir: str
+    retention_days: int
+    min_level: str
+    console_output: bool

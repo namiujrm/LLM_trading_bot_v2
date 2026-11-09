@@ -40,10 +40,12 @@ services:
       - trading_net
 
   ninerouter:
-    image: node:20-alpine
+    image: node:22-alpine
     container_name: trading_9router_gateway
     restart: unless-stopped
     working_dir: /app
+    environment:
+      INITIAL_PASSWORD: "123456"
     command: ["sh", "-c", "npm install -g 9router@latest && 9router -p 20128 -H 0.0.0.0 -n --skip-update"]
     ports:
       - "${NINEROUTER_PORT:-20128}:20128"

@@ -446,3 +446,158 @@ def test_tree_shap_explainer_port_structural_conformance() -> None:
     dummy = DummyTreeSHAPExplainer()
     assert isinstance(dummy, TreeSHAPExplainerPort)
     assert issubclass(NativeTreeSHAPExplainer, TreeSHAPExplainerPort)
+
+
+def test_rate_limit_governor_port_structural_conformance() -> None:
+    from trading_bot.adapters.agents.rate_limit_governor import PerProviderRateLimitGovernor
+    from trading_bot.ports.rate_limit_governor_port import (
+        RateLimitGovernorPort,
+        RouteQuotaSpec,
+    )
+
+    class DummyRateLimitGovernor:
+        async def acquire_available_route(self, tier: str, estimated_tokens: int) -> RouteQuotaSpec:
+            return RouteQuotaSpec(
+                route_id="dummy",
+                model_name="dummy_model",
+                rpm_limit=10,
+                tpm_limit=1000,
+                rpd_limit=100,
+                min_interval_ms=100,
+                max_concurrency=1,
+            )
+
+        async def mark_route_cooldown(self, route_id: str, cooldown_seconds: float) -> None:
+            pass
+
+    dummy = DummyRateLimitGovernor()
+    assert isinstance(dummy, RateLimitGovernorPort)
+    assert issubclass(PerProviderRateLimitGovernor, RateLimitGovernorPort)
+
+
+def test_macro_sentinel_port_structural_conformance() -> None:
+    from datetime import datetime
+
+    from trading_bot.adapters.agents.macro_news_sentinel import MacroNewsSentinel
+    from trading_bot.ports.macro_sentinel_port import (
+        MacroBlackoutState,
+        MacroSentinelPort,
+    )
+
+    class DummyMacroSentinel:
+        async def check_blackout(
+            self, symbol: str, current_time_utc: datetime
+        ) -> MacroBlackoutState:
+            return MacroBlackoutState(
+                is_blackout=False,
+                upcoming_event=None,
+                time_to_event_minutes=None,
+                reason="CLEAR",
+            )
+
+    dummy = DummyMacroSentinel()
+    assert isinstance(dummy, MacroSentinelPort)
+    assert issubclass(MacroNewsSentinel, MacroSentinelPort)
+
+
+def test_market_scout_port_structural_conformance() -> None:
+    from typing import Any
+
+    from trading_bot.adapters.agents.scout_agent import MarketScoutAdapter
+    from trading_bot.domain.entities.common.enums import PlaybookType, TradeSide
+    from trading_bot.domain.entities.execution.trade_blueprint import MarketThesis
+    from trading_bot.ports.agent_ports import MarketScoutPort
+    from trading_bot.ports.macro_sentinel_port import MacroBlackoutState
+
+    class DummyScout:
+        async def analyze_market(
+            self,
+            symbol: str,
+            quant_packet: dict[str, Any],
+            playbook: PlaybookType,
+            macro_state: MacroBlackoutState,
+            btc_thesis: MarketThesis | None,
+        ) -> MarketThesis:
+            return MarketThesis(
+                symbol=symbol,
+                selected_playbook=playbook,
+                proposed_side=TradeSide.FLAT,
+                supporting_active_features=[],
+                regime_alignment_score=0.5,
+                thesis_summary="Dummy thesis",
+            )
+
+    dummy = DummyScout()
+    assert isinstance(dummy, MarketScoutPort)
+    assert issubclass(MarketScoutAdapter, MarketScoutPort)
+
+
+def test_trade_architect_port_structural_conformance() -> None:
+    from typing import Any
+
+    from trading_bot.adapters.agents.architect_agent import TradeArchitectAdapter
+    from trading_bot.domain.entities.common.enums import EntryOrderType
+    from trading_bot.domain.entities.execution.trade_blueprint import (
+        MarketThesis,
+        TradeBlueprint,
+    )
+    from trading_bot.ports.agent_ports import TradeArchitectPort
+
+    class DummyArchitect:
+        async def construct_trade_blueprint(
+            self,
+            thesis: MarketThesis,
+            current_price: float,
+            atr_30m: float,
+            cohort_summary: Any,
+        ) -> TradeBlueprint:
+            return TradeBlueprint(
+                thesis=thesis,
+                order_type=EntryOrderType.LIMIT_PULLBACK_15M,
+                entry_price=current_price,
+                stop_loss_price=current_price - 2.0 * atr_30m,
+                take_profit_price=current_price + 3.0 * atr_30m,
+                rationale="Dummy blueprint",
+            )
+
+    dummy = DummyArchitect()
+    assert isinstance(dummy, TradeArchitectPort)
+    assert issubclass(TradeArchitectAdapter, TradeArchitectPort)
+
+
+def test_risk_arbiter_port_structural_conformance() -> None:
+    from typing import Any
+
+    from trading_bot.adapters.agents.arbiter_agent import RiskArbiterAdapter
+    from trading_bot.domain.entities.common.enums import (
+        ExistingPositionDirective,
+        RiskDecisionType,
+    )
+    from trading_bot.domain.entities.execution.trade_blueprint import (
+        RiskVerdict,
+        TradeBlueprint,
+    )
+    from trading_bot.ports.agent_ports import RiskArbiterPort
+
+    class DummyArbiter:
+        async def evaluate_risk(
+            self,
+            blueprint: TradeBlueprint,
+            account_context: Any,
+            memory_pack: Any,
+        ) -> RiskVerdict:
+            return RiskVerdict(
+                decision=RiskDecisionType.VETO_TO_SHADOW,
+                approved_leverage=1,
+                approved_notional_usd=0.0,
+                net_rr=0.0,
+                reason="Dummy rejection",
+                arbiter_size_multiplier=0.0,
+                veto_category=None,
+                existing_position_directive=ExistingPositionDirective.HOLD_EXISTING,
+                portfolio_risk_rationale="Dummy rationale",
+            )
+
+    dummy = DummyArbiter()
+    assert isinstance(dummy, RiskArbiterPort)
+    assert issubclass(RiskArbiterAdapter, RiskArbiterPort)

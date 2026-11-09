@@ -136,4 +136,5 @@ modules = [
     "trading_bot.adapters.telegram",
     "trading_bot.adapters.quant_engine",
     "trading_bot.adapters.ml_engine",
+    "trading_bot.adapters.agents",
 ]
