@@ -28,6 +28,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from trading_bot.application.services.shadow_order_tracker import ShadowOrderTracker
 from trading_bot.application.use_cases.evaluate_tiered_funnel import (
     FunnelStage,
     TieredFunnelEvaluator,
@@ -37,12 +38,14 @@ from trading_bot.domain.entities.common.enums import (
     RiskDecisionType,
     TradeSide,
 )
+from trading_bot.domain.entities.execution.shadow_order import ShadowOrderRecord
 from trading_bot.domain.entities.execution.trade_blueprint import (
     BracketOrderTicket,
     MarketThesis,
     RiskVerdict,
     TradeBlueprint,
 )
+from trading_bot.domain.entities.market.market_state import SemanticQuantPacket
 from trading_bot.domain.entities.memory.episodic_case import (
     CohortBaseRateSummary,
     StratifiedMemoryPack,
@@ -97,6 +100,7 @@ class Run30mTradingCycleUseCase:
         execution_gateway: ExecutionGatewayPort,
         macro_sentinel: MacroSentinelPort,
         memory_repo: MemoryRepositoryPort | None,
+        shadow_order_tracker: ShadowOrderTracker | None,
     ) -> None:
         self.funnel_evaluator: TieredFunnelEvaluator = funnel_evaluator
         self.scout: MarketScoutPort = scout
@@ -105,6 +109,30 @@ class Run30mTradingCycleUseCase:
         self.execution_gateway: ExecutionGatewayPort = execution_gateway
         self.macro_sentinel: MacroSentinelPort = macro_sentinel
         self.memory_repo: MemoryRepositoryPort | None = memory_repo
+        self.shadow_order_tracker: ShadowOrderTracker | None = shadow_order_tracker
+
+    def register_post_sl_position(
+        self,
+        symbol: str,
+        side: TradeSide,
+        entry_price: float,
+        sl_price: float,
+        tp_price: float,
+        exit_timestamp_ms: int,
+        quant_packet: SemanticQuantPacket | dict[str, Any],
+    ) -> ShadowOrderRecord | None:
+        """Register a live position that hit SL for post-SL shadow tracking."""
+        if self.shadow_order_tracker is not None:
+            return self.shadow_order_tracker.register_post_sl_position(
+                symbol=symbol,
+                side=side,
+                entry_price=entry_price,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                exit_timestamp_ms=exit_timestamp_ms,
+                quant_packet=quant_packet,
+            )
+        return None
 
     async def execute_cycle(
         self,
@@ -112,7 +140,7 @@ class Run30mTradingCycleUseCase:
         market_inputs: dict[str, TieredFunnelInput],
         current_prices: dict[str, float],
         atr_30m_values: dict[str, float],
-        quant_packets: dict[str, dict[str, Any]],
+        quant_packets: dict[str, Any],
     ) -> TradingCycleSummary:
         """Execute the 30-minute trading cycle with BTC-lead cascade and altcoin parallelism."""
         cycle_timestamp_ms = int(cycle_time_utc.timestamp() * 1000)
@@ -267,9 +295,22 @@ class Run30mTradingCycleUseCase:
 
         # 2. Scout Market Deliberation
         quant_packet = quant_packets[symbol]
+        scout_packet: dict[str, Any]
+        if isinstance(quant_packet, SemanticQuantPacket):
+            scout_packet = {
+                "symbol": quant_packet.symbol,
+                "timestamp_ms": quant_packet.timestamp_ms,
+                "active_features": [f.model_dump() for f in quant_packet.active_features],
+                "market_regime": quant_packet.market_regime.value,
+                "oi_quadrant": quant_packet.oi_quadrant.value,
+                "vector_16d": quant_packet.trajectory_vector_16d,
+            }
+        else:
+            scout_packet = quant_packet
+
         thesis = await self.scout.analyze_market(
             symbol=symbol,
-            quant_packet=quant_packet,
+            quant_packet=scout_packet,
             playbook=funnel_verdict.playbook,
             macro_state=macro_state,
             btc_thesis=btc_thesis,
@@ -294,14 +335,20 @@ class Run30mTradingCycleUseCase:
         # 3. Retrieve Episodic Memory if repository is configured
         cohort_summary: CohortBaseRateSummary | None = None
         memory_pack: StratifiedMemoryPack | None = None
-        if self.memory_repo is not None and "vector_16d" in quant_packet:
+        vector_16d: list[float] | None = None
+        if isinstance(quant_packet, SemanticQuantPacket):
+            vector_16d = quant_packet.trajectory_vector_16d
+        elif "vector_16d" in quant_packet:
+            vector_16d = quant_packet["vector_16d"]
+
+        if self.memory_repo is not None and vector_16d is not None:
             cohort_summary = await self.memory_repo.compute_cohort_summary(
-                quant_packet["vector_16d"],
+                vector_16d,
                 funnel_verdict.playbook.value,
                 20,
             )
             memory_pack = await self.memory_repo.fetch_stratified_pack(
-                quant_packet["vector_16d"],
+                vector_16d,
                 funnel_verdict.playbook.value,
                 20,
             )
@@ -354,6 +401,16 @@ class Run30mTradingCycleUseCase:
                     rejection_reason=None,
                 ),
                 thesis,
+            )
+
+        if self.shadow_order_tracker is not None and verdict.decision in (
+            RiskDecisionType.VETO,
+            RiskDecisionType.VETO_TO_SHADOW,
+        ):
+            self.shadow_order_tracker.register_vetoed_candidate(
+                blueprint=blueprint,
+                verdict=verdict,
+                quant_packet=quant_packet,
             )
 
         if verdict.decision == RiskDecisionType.VETO_TO_SHADOW:

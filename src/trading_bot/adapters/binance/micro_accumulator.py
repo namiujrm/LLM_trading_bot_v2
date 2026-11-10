@@ -5,6 +5,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from trading_bot.domain.entities.market.market_state import (
+    EnrichedMicroBarRecord as EnrichedMicroBarRecord,
+)
+
 
 @dataclass
 class MicroIngestorConfig:
@@ -13,29 +17,6 @@ class MicroIngestorConfig:
     obi_depth_levels: int
     obi_decay_rate: float
     bps_scale_factor: float
-
-
-@dataclass
-class EnrichedMicroBarRecord:
-    """Fully enriched 1-minute bar record incorporating microstructure dynamics."""
-
-    symbol: str
-    open_time_ms: int
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-    quote_volume: float
-    taker_buy_vol: float
-    taker_buy_quote_vol: float
-    trade_count: int
-    ofi_sum: float
-    obi_mean: float
-    obi_std: float
-    spread_bps_mean: float
-    liq_long_usd: float
-    liq_short_usd: float
 
 
 class MinuteMicroAccumulator:
@@ -155,6 +136,48 @@ class MinuteMicroAccumulator:
         if not is_buyer_maker:
             self.taker_buy_vol += qty
             self.taker_buy_quote_vol += quote_val
+
+    def on_kline(
+        self,
+        open_price: float,
+        high_price: float,
+        low_price: float,
+        close_price: float,
+        volume: float,
+        quote_volume: float,
+        taker_buy_vol: float,
+        taker_buy_quote_vol: float,
+        trade_count: int,
+        is_closed: bool,
+    ) -> None:
+        """Process official Binance 1m kline event to reconcile or update bar OHLCV."""
+        if not self.has_first_trade:
+            self.open_price = open_price
+            self.high_price = high_price
+            self.low_price = low_price
+            self.close_price = close_price
+            self.has_first_trade = True
+            self.volume = volume
+            self.quote_volume = quote_volume
+            self.taker_buy_vol = taker_buy_vol
+            self.taker_buy_quote_vol = taker_buy_quote_vol
+            self.trade_count = trade_count
+        else:
+            if high_price > self.high_price:
+                self.high_price = high_price
+            if low_price < self.low_price and low_price > 0.0:
+                self.low_price = low_price
+            self.close_price = close_price
+            if volume > self.volume:
+                self.volume = volume
+            if quote_volume > self.quote_volume:
+                self.quote_volume = quote_volume
+            if taker_buy_vol > self.taker_buy_vol:
+                self.taker_buy_vol = taker_buy_vol
+            if taker_buy_quote_vol > self.taker_buy_quote_vol:
+                self.taker_buy_quote_vol = taker_buy_quote_vol
+            if trade_count > self.trade_count:
+                self.trade_count = trade_count
 
     def on_depth_update(
         self,

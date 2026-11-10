@@ -601,3 +601,32 @@ def test_risk_arbiter_port_structural_conformance() -> None:
     dummy = DummyArbiter()
     assert isinstance(dummy, RiskArbiterPort)
     assert issubclass(RiskArbiterAdapter, RiskArbiterPort)
+
+
+def test_post_mortem_judge_port_structural_conformance() -> None:
+    from typing import Any
+
+    from trading_bot.domain.entities.common.enums import OutcomeCategory
+    from trading_bot.domain.entities.execution.shadow_order import ShadowOrderRecord
+    from trading_bot.domain.entities.memory.episodic_case import EpisodicCase
+    from trading_bot.ports.agent_ports import PostMortemJudgePort
+
+    class DummyJudge:
+        async def conduct_autopsy(
+            self,
+            shadow_order: ShadowOrderRecord,
+            quant_context: dict[str, Any],
+        ) -> EpisodicCase:
+            return EpisodicCase(
+                case_id=shadow_order.shadow_id,
+                symbol=shadow_order.symbol,
+                timestamp_ms=shadow_order.entry_timestamp_ms,
+                vector_16d=[0.0] * 16,
+                outcome=OutcomeCategory.VALIDATED_DEFENSE,
+                confidence_score=0.85,
+                lesson_summary="Autopsy concluded setup defense was appropriate.",
+                playbook="TREND_CONTINUATION_BREAKOUT",
+            )
+
+    dummy = DummyJudge()
+    assert isinstance(dummy, PostMortemJudgePort)
