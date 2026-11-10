@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from trading_bot.domain.entities.common.enums import PlaybookType
+from trading_bot.domain.entities.execution.shadow_order import ShadowOrderRecord
 from trading_bot.domain.entities.execution.trade_blueprint import (
     MarketThesis,
     RiskVerdict,
@@ -16,6 +17,7 @@ from trading_bot.domain.entities.execution.trade_blueprint import (
 )
 from trading_bot.domain.entities.memory.episodic_case import (
     CohortBaseRateSummary,
+    EpisodicCase,
     StratifiedMemoryPack,
 )
 from trading_bot.domain.entities.risk.account_state import AccountPortfolioContext
@@ -64,4 +66,17 @@ class RiskArbiterPort(Protocol):
         memory_pack: StratifiedMemoryPack | None,
     ) -> RiskVerdict:
         """Evaluate trade risk against account context and historical failure memory."""
+        ...
+
+
+@runtime_checkable
+class PostMortemJudgePort(Protocol):
+    """Port interface for Post-Mortem Autopsy Judge agent."""
+
+    async def conduct_autopsy(
+        self,
+        shadow_order: ShadowOrderRecord,
+        quant_context: dict[str, Any],
+    ) -> EpisodicCase:
+        """Conduct post-mortem autopsy on a concluded shadow order and synthesize tactical lesson."""
         ...

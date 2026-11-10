@@ -116,6 +116,7 @@ def create_ninerouter_config() -> NinerouterConfig:
         timeout_seconds=15.0,
         fast_tier_model="ds/deepseek-v4-flash",
         deep_tier_model="ds/deepseek-v4-pro",
+        judge_tier_model="gemini-2.5-flash",
     )
 
 

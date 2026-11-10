@@ -2,9 +2,34 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from pydantic import BaseModel
 
 from trading_bot.domain.entities.common.enums import MarketRegime, OIPriceQuadrant
+
+
+@dataclass
+class EnrichedMicroBarRecord:
+    """Fully enriched 1-minute bar record incorporating microstructure dynamics."""
+
+    symbol: str
+    open_time_ms: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    quote_volume: float
+    taker_buy_vol: float
+    taker_buy_quote_vol: float
+    trade_count: int
+    ofi_sum: float
+    obi_mean: float
+    obi_std: float
+    spread_bps_mean: float
+    liq_long_usd: float
+    liq_short_usd: float
 
 
 class MicroBar1m(BaseModel):

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
+
 from pydantic import BaseModel
 
 
@@ -43,6 +46,28 @@ class NinerouterConfig(BaseModel):
     timeout_seconds: float
     fast_tier_model: str
     deep_tier_model: str
+    judge_tier_model: str
+
+
+class ConfigLoader:
+    """Factory loading configurations from environment mappings with zero defaults and fail-fast discipline."""
+
+    @staticmethod
+    def load_ninerouter_config(env_mapping: Mapping[str, str]) -> NinerouterConfig:
+        """Construct NinerouterConfig from an explicit environment mapping (fail-fast KeyError on missing keys)."""
+        return NinerouterConfig(
+            base_url=env_mapping["NINEROUTER_BASE_URL"],
+            api_key=env_mapping["NINEROUTER_API_KEY"],
+            timeout_seconds=float(env_mapping["NINEROUTER_TIMEOUT_SECONDS"]),
+            fast_tier_model=env_mapping["MODEL_FAST_TIER"],
+            deep_tier_model=env_mapping["MODEL_DEEP_TIER"],
+            judge_tier_model=env_mapping["MODEL_JUDGE_TIER"],
+        )
+
+    @staticmethod
+    def load_ninerouter_config_from_env() -> NinerouterConfig:
+        """Construct NinerouterConfig directly from os.environ."""
+        return ConfigLoader.load_ninerouter_config(os.environ)
 
 
 class TelegramConfig(BaseModel):

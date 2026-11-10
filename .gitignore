@@ -51,9 +51,13 @@ htmlcov/
 .env.*
 !.env.example
 
+# Application & Deliberation Logs
+logs/
+*.log
+*.jsonl
+
 # Database / Local artifacts
 *.sqlite3
-*.log
 
 # Quant Data Stores & Model Weights
 data/

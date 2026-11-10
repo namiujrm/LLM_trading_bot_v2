@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from trading_bot.ports.agent_ports import (
     MarketScoutPort,
+    PostMortemJudgePort,
     RiskArbiterPort,
     TradeArchitectPort,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "MarketScoutPort",
     "MemoryRepositoryPort",
     "OODDetectorPort",
+    "PostMortemJudgePort",
     "ProbabilityCalibratorPort",
     "QuantEnginePort",
     "RateLimitGovernorPort",

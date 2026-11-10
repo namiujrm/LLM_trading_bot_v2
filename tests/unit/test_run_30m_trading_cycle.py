@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from trading_bot.application.services.shadow_order_tracker import ShadowOrderTracker
 from trading_bot.application.use_cases.evaluate_tiered_funnel import (
     TieredFunnelEvaluator,
     TieredFunnelInput,
@@ -397,6 +398,7 @@ async def test_run_cycle_btc_lead_cascade_success() -> None:
         execution_gateway=gateway,
         macro_sentinel=sentinel,
         memory_repo=memory_repo,
+        shadow_order_tracker=None,
     )
 
     cycle_time = datetime(2026, 11, 9, 14, 30, tzinfo=UTC)
@@ -484,6 +486,7 @@ async def test_run_cycle_btc_flat_propagates_none_to_altcoins() -> None:
         execution_gateway=gateway,
         macro_sentinel=sentinel,
         memory_repo=None,
+        shadow_order_tracker=None,
     )
 
     cycle_time = datetime(2026, 11, 9, 14, 30, tzinfo=UTC)
@@ -541,6 +544,7 @@ async def test_run_cycle_veto_flags_shadow_orders() -> None:
         execution_gateway=gateway,
         macro_sentinel=sentinel,
         memory_repo=None,
+        shadow_order_tracker=None,
     )
 
     cycle_time = datetime(2026, 11, 9, 14, 30, tzinfo=UTC)
@@ -592,6 +596,7 @@ async def test_run_cycle_macro_blackout_halts_execution() -> None:
         execution_gateway=gateway,
         macro_sentinel=sentinel,
         memory_repo=None,
+        shadow_order_tracker=None,
     )
 
     cycle_time = datetime(2026, 11, 9, 13, 20, tzinfo=UTC)
@@ -665,6 +670,7 @@ async def test_run_cycle_parallel_altcoin_execution() -> None:
         execution_gateway=gateway,
         macro_sentinel=sentinel,
         memory_repo=None,
+        shadow_order_tracker=None,
     )
 
     cycle_time = datetime(2026, 11, 9, 14, 30, tzinfo=UTC)
@@ -724,6 +730,7 @@ async def test_run_cycle_funnel_rejection_skips_crew() -> None:
         execution_gateway=gateway,
         macro_sentinel=sentinel,
         memory_repo=None,
+        shadow_order_tracker=None,
     )
 
     cycle_time = datetime(2026, 11, 9, 14, 30, tzinfo=UTC)
@@ -749,3 +756,85 @@ async def test_run_cycle_funnel_rejection_skips_crew() -> None:
     assert len(scout.calls) == 0
     assert len(architect.constructed_symbols) == 0
     assert len(arbiter.evaluated_blueprints) == 0
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_registers_shadow_orders_on_veto() -> None:
+    """When arbiter issues VETO or VETO_TO_SHADOW and shadow_tracker is present, register in tracker."""
+    funnel = make_funnel_evaluator()
+    sentinel = MockMacroSentinel(is_blackout=False, reason="NO_BLACKOUT")
+    gateway = MockExecutionGateway(make_portfolio_context())
+    scout = MockMarketScout(
+        {
+            "BTCUSDT": TradeSide.LONG,
+            "ETHUSDT": TradeSide.LONG,
+        }
+    )
+    architect = MockTradeArchitect()
+    arbiter = MockRiskArbiter(
+        {
+            "BTCUSDT": RiskDecisionType.VETO_TO_SHADOW,
+            "ETHUSDT": RiskDecisionType.VETO,
+        }
+    )
+    tracker = ShadowOrderTracker(max_tracking_duration_ms=21600000)
+
+    use_case = Run30mTradingCycleUseCase(
+        funnel_evaluator=funnel,
+        scout=scout,
+        architect=architect,
+        arbiter=arbiter,
+        execution_gateway=gateway,
+        macro_sentinel=sentinel,
+        memory_repo=None,
+        shadow_order_tracker=tracker,
+    )
+
+    cycle_time = datetime(2026, 11, 9, 14, 30, tzinfo=UTC)
+    market_inputs = {
+        "BTCUSDT": make_symbol_input("BTCUSDT", True),
+        "ETHUSDT": make_symbol_input("ETHUSDT", True),
+    }
+    current_prices = {"BTCUSDT": 90000.0, "ETHUSDT": 3200.0}
+    atr_30m_values = {"BTCUSDT": 500.0, "ETHUSDT": 30.0}
+    quant_packets: dict[str, dict[str, Any]] = {
+        "BTCUSDT": {"atr_30m": 500.0, "timestamp_ms": 1731162600000},
+        "ETHUSDT": {"atr_30m": 30.0, "timestamp_ms": 1731162600000},
+    }
+
+    summary = await use_case.execute_cycle(
+        cycle_time_utc=cycle_time,
+        market_inputs=market_inputs,
+        current_prices=current_prices,
+        atr_30m_values=atr_30m_values,
+        quant_packets=quant_packets,
+    )
+
+    # 1. BTC was VETO_TO_SHADOW: is_shadow is True
+    assert summary.btc_result.is_shadow is True
+    assert summary.btc_result.order_id is None
+
+    # 2. ETH was VETO: is_shadow is False
+    assert summary.altcoin_results["ETHUSDT"].is_shadow is False
+    assert summary.altcoin_results["ETHUSDT"].order_id is None
+
+    # 3. Both candidates were registered in tracker
+    active_orders = tracker.get_all_active_orders()
+    assert len(active_orders) == 2
+    symbols_in_tracker = {o.symbol for o in active_orders}
+    assert symbols_in_tracker == {"BTCUSDT", "ETHUSDT"}
+
+    # 4. Test post-SL registration helper
+    sl_record = use_case.register_post_sl_position(
+        symbol="SOLUSDT",
+        side=TradeSide.LONG,
+        entry_price=180.0,
+        sl_price=175.0,
+        tp_price=190.0,
+        exit_timestamp_ms=1731162600000,
+        quant_packet={"atr_30m": 3.5},
+    )
+    assert sl_record is not None
+    assert sl_record.symbol == "SOLUSDT"
+    assert sl_record.is_post_sl_tracker is True
+    assert len(tracker.get_all_active_orders()) == 3

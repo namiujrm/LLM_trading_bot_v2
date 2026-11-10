@@ -225,6 +225,7 @@ def make_ninerouter_config() -> NinerouterConfig:
         timeout_seconds=10.0,
         fast_tier_model="ds/deepseek-v4-flash",
         deep_tier_model="ds/deepseek-v4-pro",
+        judge_tier_model="gemini-2.5-flash",
     )
 
 
@@ -551,10 +552,11 @@ async def test_scenario_1_normal_deliberation_and_order_placement(tmp_path: Path
         execution_gateway=gateway,
         macro_sentinel=sentinel,
         memory_repo=None,
+        shadow_order_tracker=None,
     )
 
     # 6. Execute 30-Minute Cascade Trading Cycle
-    cycle_time = datetime(2026, 11, 9, 14, 0, 0, tzinfo=UTC)
+    cycle_time = datetime.now(UTC)
     market_inputs = {
         "BTCUSDT": make_funnel_input(
             "BTCUSDT",
@@ -751,9 +753,10 @@ async def test_scenario_2_deterministic_fallback_and_critical_logging(tmp_path: 
         execution_gateway=gateway,
         macro_sentinel=sentinel,
         memory_repo=None,
+        shadow_order_tracker=None,
     )
 
-    cycle_time = datetime(2026, 11, 9, 14, 30, 0, tzinfo=UTC)
+    cycle_time = datetime.now(UTC)
     market_inputs = {
         "BTCUSDT": make_funnel_input(
             "BTCUSDT",
@@ -905,6 +908,7 @@ async def test_scenario_3_macro_news_blackout_halting() -> None:
         execution_gateway=gateway,
         macro_sentinel=sentinel,
         memory_repo=None,
+        shadow_order_tracker=None,
     )
 
     market_inputs = {
@@ -1108,6 +1112,7 @@ async def test_scenario_4_shadow_veto_on_excess_heat() -> None:
         execution_gateway=gateway,
         macro_sentinel=sentinel,
         memory_repo=None,
+        shadow_order_tracker=None,
     )
 
     cycle_time = datetime(2026, 11, 9, 15, 30, 0, tzinfo=UTC)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from trading_bot.adapters.agents.arbiter_agent import RiskArbiterAdapter
 from trading_bot.adapters.agents.architect_agent import TradeArchitectAdapter
+from trading_bot.adapters.agents.judge_agent import PostMortemJudgeAdapter
 from trading_bot.adapters.agents.macro_news_sentinel import (
     MacroEventSchedule,
     MacroNewsSentinel,
@@ -34,6 +35,7 @@ __all__ = [
     "NinerouterClient",
     "NinerouterResponse",
     "PerProviderRateLimitGovernor",
+    "PostMortemJudgeAdapter",
     "RiskArbiterAdapter",
     "TradeArchitectAdapter",
     "extract_json_from_raw_text",
