@@ -21,7 +21,6 @@ Enforces 100% Invariant #9 compliance across all test doubles and helpers:
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -1095,12 +1094,12 @@ async def test_stage6_live_pgvector_rag_retrieval() -> None:
     Reads from the live database container populated by `scripts/seed_episodic_memory.py`.
     """
     db_cfg = DatabaseConfig(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=int(os.getenv("POSTGRES_PORT", "5433")),
-        db_name=os.getenv("POSTGRES_DB", "trading_bot_db"),
-        user=os.getenv("POSTGRES_USER", "postgres"),
-        password=os.getenv("POSTGRES_PASSWORD", "postgres"),
-        max_connections=int(os.getenv("POSTGRES_MAX_CONNECTIONS", "5")),
+        host="localhost",
+        port=5433,
+        db_name="trading_bot_db",
+        user="postgres",
+        password="postgres",
+        max_connections=5,
     )
     db_mgr = DatabaseManager(db_cfg)
 
@@ -1111,12 +1110,6 @@ async def test_stage6_live_pgvector_rag_retrieval() -> None:
 
     try:
         repo = PgvectorMemoryRepository(db_mgr)
-
-        # Seed test cases so live pgvector similarity and RAG cohort retrieval work
-        # reliably across both clean CI containers and populated databases
-        test_cases = make_test_cases()
-        for c in test_cases:
-            await repo.upsert_case(c)
         playbooks = [
             PlaybookType.TREND_CONTINUATION_BREAKOUT.value,
             PlaybookType.LIQUIDATION_EXHAUSTION_REVERSAL.value,

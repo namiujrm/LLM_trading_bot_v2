@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from scripts.seed_episodic_memory import (
     CONFIDENCE_MAP,
@@ -83,15 +81,10 @@ def test_lesson_templates_coverage() -> None:
 
 
 def test_select_stratified_cases_from_parquet() -> None:
-    pred_path = Path("data/predictions_36m/all_4pairs_predictions_36m.parquet")
-    feat_path = Path("data/features_36m/36m_features_labels_all_4pairs.parquet")
+    pred_path = "data/predictions_36m/all_4pairs_predictions_36m.parquet"
+    feat_path = "data/features_36m/36m_features_labels_all_4pairs.parquet"
 
-    if not pred_path.is_file() or not feat_path.is_file():
-        pytest.skip(
-            f"Required parquet datasets not found ({pred_path}, {feat_path}). Skipping live parquet selection test."
-        )
-
-    cases = select_stratified_cases(str(pred_path), str(feat_path))
+    cases = select_stratified_cases(pred_path, feat_path)
     assert len(cases) == 72
 
     symbols_found = {c.symbol for c in cases}
