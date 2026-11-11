@@ -9,7 +9,10 @@ from trading_bot.ports.agent_ports import (
     TradeArchitectPort,
 )
 from trading_bot.ports.alpha_dsl_port import AlphaDSLCompilerPort
-from trading_bot.ports.execution_gateway_port import ExecutionGatewayPort
+from trading_bot.ports.execution_gateway_port import (
+    ExecutionGatewayPort,
+    HistoricalMultiTFWarmupPort,
+)
 from trading_bot.ports.feature_store_port import FeatureStorePort
 from trading_bot.ports.logger_port import StructuredBotLoggerPort
 from trading_bot.ports.macro_sentinel_port import (
@@ -32,7 +35,11 @@ from trading_bot.ports.ml_model_port import (
     ProbabilityCalibratorPort,
     TreeSHAPExplainerPort,
 )
-from trading_bot.ports.model_registry_port import ModelRegistryPort, ModelTrainerPort
+from trading_bot.ports.model_registry_port import (
+    CalibratorRegistryPort,
+    ModelRegistryPort,
+    ModelTrainerPort,
+)
 from trading_bot.ports.model_tournament_port import ModelTournamentNotifierPort
 from trading_bot.ports.quant_engine_port import QuantEnginePort
 from trading_bot.ports.rate_limit_governor_port import (
@@ -51,9 +58,11 @@ __all__ = [
     "CLUSTER_2_DERIV",
     "CLUSTER_3_CROSS",
     "AlphaDSLCompilerPort",
+    "CalibratorRegistryPort",
     "CausalBarrierModelPort",
     "ExecutionGatewayPort",
     "FeatureStorePort",
+    "HistoricalMultiTFWarmupPort",
     "MacroBlackoutState",
     "MacroSentinelPort",
     "MarketDataPort",

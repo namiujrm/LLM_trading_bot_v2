@@ -34,9 +34,11 @@ from trading_bot.ports.market_data_port import MarketDataPort
 from trading_bot.ports.ml_model_port import (
     CausalBarrierModelPort,
     OODDetectorPort,
+    ProbabilityCalibratorPort,
     TreeSHAPExplainerPort,
 )
 from trading_bot.ports.model_registry_port import (
+    CalibratorRegistryPort,
     ModelRegistryPort,
     ModelTrainerPort,
 )
@@ -98,14 +100,39 @@ class ModelTrainingService:
 
         # 1. Check if Champion model already exists and is uncorrupted
         try:
-            _, _, _, existing_meta = await self._model_registry.load_champion_model()
-            is_legacy_toy = (
-                existing_meta.training_sample_count < 1000 and "bootstrap" in existing_meta.model_id
+            _, existing_ood, _, existing_meta = await self._model_registry.load_champion_model()
+            missing_trade_sharpe = (
+                existing_meta.backtest_metrics is None
+                or "trade_sharpe" not in existing_meta.backtest_metrics
             )
-            if has_real_dataset and is_legacy_toy:
+            missing_calibrators = (
+                isinstance(self._model_registry, CalibratorRegistryPort)
+                and (await self._model_registry.load_champion_calibrators()) is None
+            )
+            is_not_6d_ood = (
+                hasattr(existing_ood, "config")
+                and len(
+                    existing_ood.config.feature_names  # type: ignore[attr-defined]
+                )
+                != 6
+            )
+            is_legacy_or_stale = (
+                existing_meta.training_sample_count < 1000
+                or existing_meta.net_sharpe < 0.0
+                or missing_trade_sharpe
+                or missing_calibrators
+                or is_not_6d_ood
+            )
+            if has_real_dataset and is_legacy_or_stale:
                 logger.warning(
-                    "Detected legacy toy bootstrap Champion (%d samples) while real 36M dataset is available. Upgrading to 36M Champion.",
+                    "Detected legacy or unsynchronized Champion (%d samples, sharpe=%.2f, "
+                    "missing_trade_sharpe=%s, missing_cal=%s, non_6d_ood=%s) while real 36M dataset "
+                    "is available. Upgrading Champion via synced 6D OOD & Walk-Forward Backtest.",
                     existing_meta.training_sample_count,
+                    existing_meta.net_sharpe,
+                    missing_trade_sharpe,
+                    missing_calibrators,
+                    is_not_6d_ood,
                 )
             else:
                 logger.info("Found valid existing Champion model: %s", existing_meta.model_id)
@@ -116,6 +143,8 @@ class ModelTrainingService:
             )
 
         # 2. Load real 36M dataset if present; otherwise fall back to bars / unit-test baseline
+        backtest_metrics: dict[str, float] | None = None
+        calibrators: tuple[ProbabilityCalibratorPort, ProbabilityCalibratorPort] | None = None
         if has_real_dataset and self._dataset_path is not None:
             cal_ratio = 0.28
             (
@@ -154,11 +183,20 @@ class ModelTrainingService:
                 parquet_path=self._dataset_path,
                 feature_names=self._canonical_features,
                 cal_ratio=cal_ratio,
+                random_state=42,
+            )
+            calibrators = await asyncio.to_thread(
+                self._model_trainer.fit_calibrators_on_parquet,
+                model=model,
+                parquet_path=self._dataset_path,
+                feature_names=self._canonical_features,
+                cal_ratio=cal_ratio,
             )
             net_sharpe = eval_metrics["net_sharpe"]
             brier_score = eval_metrics["brier_score"]
             brier_skill_score = eval_metrics["brier_skill_score"]
             max_drawdown_pct = eval_metrics["max_drawdown_pct"]
+            backtest_metrics = eval_metrics
         else:
             active_bars = historical_bars
             if active_bars is None and market_data_port is not None:
@@ -209,6 +247,7 @@ class ModelTrainingService:
             brier_skill_score=brier_skill_score,
             max_drawdown_pct=max_drawdown_pct,
             file_checksum="uncalculated",
+            backtest_metrics=backtest_metrics,
         )
 
         # 4. Persist to registry
@@ -219,6 +258,12 @@ class ModelTrainingService:
             explainer=explainer,
             metadata=bootstrap_meta,
         )
+        if calibrators is not None and isinstance(self._model_registry, CalibratorRegistryPort):
+            await self._model_registry.save_calibrators(
+                role=ModelRole.CHAMPION,
+                calibrator_long=calibrators[0],
+                calibrator_short=calibrators[1],
+            )
 
         # 5. Re-load to ensure strict persistence round-trip integrity
         _, _, _, persisted_meta = await self._model_registry.load_champion_model()
@@ -258,6 +303,10 @@ class ModelTrainingService:
             set(self._canonical_features)
         )
 
+        backtest_metrics: dict[str, float] | None = None
+        challenger_calibrators: (
+            tuple[ProbabilityCalibratorPort, ProbabilityCalibratorPort] | None
+        ) = None
         if can_use_real_dataset and self._dataset_path is not None:
             cal_ratio = 0.28
             weekly_updates_path = str(Path(self._dataset_path).parent / "weekly_updates.parquet")
@@ -305,11 +354,20 @@ class ModelTrainingService:
                 parquet_path=self._dataset_path,
                 feature_names=target_features,
                 cal_ratio=cal_ratio,
+                random_state=seed_val,
+            )
+            challenger_calibrators = await asyncio.to_thread(
+                self._model_trainer.fit_calibrators_on_parquet,
+                model=model,
+                parquet_path=self._dataset_path,
+                feature_names=target_features,
+                cal_ratio=cal_ratio,
             )
             expected_sharpe = eval_metrics["net_sharpe"]
             brier_score = eval_metrics["brier_score"]
             expected_bss = eval_metrics["brier_skill_score"]
             expected_dd = eval_metrics["max_drawdown_pct"]
+            backtest_metrics = eval_metrics
         else:
             if clean_mode == "full":
                 sample_count = self._default_sample_count * 2
@@ -369,6 +427,7 @@ class ModelTrainingService:
             brier_skill_score=expected_bss,
             max_drawdown_pct=expected_dd,
             file_checksum="uncalculated",
+            backtest_metrics=backtest_metrics,
         )
 
         await self._model_registry.save_model(
@@ -378,6 +437,14 @@ class ModelTrainingService:
             explainer=explainer,
             metadata=challenger_meta,
         )
+        if challenger_calibrators is not None and isinstance(
+            self._model_registry, CalibratorRegistryPort
+        ):
+            await self._model_registry.save_calibrators(
+                role=ModelRole.CHALLENGER,
+                calibrator_long=challenger_calibrators[0],
+                calibrator_short=challenger_calibrators[1],
+            )
 
         logger.info(
             "Trained and saved Challenger model: %s (mode: %s, samples: %d)",

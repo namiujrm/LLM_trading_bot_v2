@@ -571,3 +571,122 @@ async def test_warmup_historical_bars_populates_buffers_without_triggering_cycle
 
     # 3. ZERO live cycles dispatched during warmup
     assert len(cycle_dispatches) == 0
+
+
+@pytest.mark.asyncio
+async def test_canonical_11_features_6d_ood_and_venn_abers_live_parity() -> None:
+    """Verify canonical 11-feature synthesis (350+ 30m warmup), 6D OOD slicing, and Venn-Abers calibration."""
+    import numpy as np
+
+    from trading_bot.adapters.ml_engine.conformal_ood_detector import ConformalSubspaceOODDetector
+    from trading_bot.adapters.ml_engine.model_trainer_adapter import SUBSPACE_FEATURES
+    from trading_bot.adapters.ml_engine.tabulated_venn_abers import TabulatedVennAbersCalibrator
+    from trading_bot.domain.entities.ml.ml_configs import ConformalOODConfig, FastVennAbersConfig
+
+    captured_features: list[list[float]] = []
+
+    class RecordingBarrierModel(MockBarrierModel):
+        def predict(self, sample_features: Sequence[float]) -> BarrierPredictionResult:
+            captured_features.append(list(sample_features))
+            return super().predict(sample_features)
+
+    rng = np.random.default_rng(77)
+    train_6d = rng.normal(0.0, 1.0, size=(200, 6)).tolist()
+    cal_6d = rng.normal(0.0, 1.0, size=(100, 6)).tolist()
+    ood_cfg = ConformalOODConfig(
+        feature_names=SUBSPACE_FEATURES,
+        alpha_significance=0.01,
+        kappa_shrinkage=2.0,
+        max_condition_number=100.0,
+        min_eigenvalue_floor=1e-5,
+    )
+    real_6d_ood = ConformalSubspaceOODDetector(config=ood_cfg)
+    real_6d_ood.fit(train_features=train_6d, calibration_features=cal_6d)
+
+    va_cfg = FastVennAbersConfig(
+        grid_points=500,
+        prob_clip_min=0.001,
+        prob_clip_max=0.999,
+        denom_eps=1e-6,
+        uncertainty_threshold=0.15,
+        calibration_floor=0.001,
+    )
+    va_long = TabulatedVennAbersCalibrator(config=va_cfg)
+    va_short = TabulatedVennAbersCalibrator(config=va_cfg)
+    scores_cal = np.linspace(0.15, 0.85, 120).tolist()
+    labels_cal = [1 if (i % 3 == 0 or scores_cal[i] > 0.6) else 0 for i in range(120)]
+    va_long.fit(scores=scores_cal, labels=labels_cal)
+    va_short.fit(scores=scores_cal, labels=[1 - v for v in labels_cal])
+
+    quant_engine = MockQuantEngine()
+    barrier_model = RecordingBarrierModel(p_long=0.68, p_short=0.22)
+    treeshap = MockTreeSHAPExplainer()
+    pipeline = LiveBarPipelineService(
+        symbols=["BTCUSDT", "ETHUSDT"],
+        quant_engine=quant_engine,
+        barrier_model=barrier_model,
+        ood_detector=real_6d_ood,
+        treeshap_explainer=treeshap,
+        on_30m_bar=None,
+        on_cycle_ready=None,
+    )
+    pipeline.set_calibrators(calibrator_long=va_long, calibrator_short=va_short)
+
+    # Warmup 360 historical 30m bars (>336 required for funding z-score and 100-bar Hurst/FracDiff)
+    base_30m_ms = 1690000200000
+    assert base_30m_ms % 1800000 == 0
+    for sym, px_base in (("BTCUSDT", 40000.0), ("ETHUSDT", 2500.0)):
+        hist_30m: list[EnrichedMicroBarRecord] = []
+        for idx in range(360):
+            ts = base_30m_ms + idx * 1800000
+            price = px_base * (1.0 + 0.0005 * idx + 0.004 * np.sin(idx * 0.17))
+            q_vol = price * 120.0
+            tb_vol = 60.0 + 18.0 * np.cos(idx * 0.25)
+            hist_30m.append(
+                EnrichedMicroBarRecord(
+                    symbol=sym,
+                    open_time_ms=ts,
+                    open=float(price - 3.0),
+                    high=float(price + 12.0),
+                    low=float(price - 12.0),
+                    close=float(price),
+                    volume=120.0,
+                    quote_volume=float(q_vol * (1.0 + 0.002 * np.sin(idx * 0.3))),
+                    taker_buy_vol=float(tb_vol),
+                    taker_buy_quote_vol=float(tb_vol * price),
+                    trade_count=450,
+                    ofi_sum=float(10.0 * np.sin(idx * 0.4)),
+                    obi_mean=0.0,
+                    obi_std=0.0,
+                    spread_bps_mean=1.2,
+                    liq_long_usd=0.0,
+                    liq_short_usd=0.0,
+                )
+            )
+        await pipeline.warmup_historical_30m_bars(sym, hist_30m)
+        assert len(pipeline.get_bars_30m(sym)) == 360
+
+    # Feed 30 live 1m bars closing the 361st 30m bar cleanly
+    next_bucket_ms = base_30m_ms + 360 * 1800000
+    for sym, px_base in (("BTCUSDT", 47200.0), ("ETHUSDT", 2950.0)):
+        for m in range(30):
+            await pipeline.on_1m_bar(
+                make_sample_1m_bar(sym, next_bucket_ms + m * 60000, px_base + float(m))
+            )
+
+    assert len(captured_features) == 2
+    for feat_vec in captured_features:
+        assert len(feat_vec) == 11
+        # FracDiff, CVD Z, OFI Z, OI score & Funding Z must all be active non-zero canonical features
+        assert abs(feat_vec[2]) > 1e-4
+        assert abs(feat_vec[4]) > 1e-4
+        assert abs(feat_vec[5]) > 1e-4
+        assert abs(feat_vec[8]) + abs(feat_vec[9]) > 1e-4
+
+    eth_input = pipeline.get_latest_funnel_input("ETHUSDT")
+    expected_cal_l = va_long.calibrate(0.68)
+    assert eth_input.p_long_cal != 0.68
+    assert abs(eth_input.p_long_cal - expected_cal_l.p_calibrated) < 1e-6 or (
+        eth_input.p_long_cal <= expected_cal_l.p_calibrated
+    )
+    assert eth_input.uncertainty_width < 0.15

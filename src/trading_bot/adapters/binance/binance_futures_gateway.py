@@ -28,12 +28,15 @@ from trading_bot.domain.entities.risk.account_state import (
 from trading_bot.domain.exceptions import ExchangeFilterViolationError
 from trading_bot.domain.services.risk.risk_calculator import DeterministicRiskCalculator
 from trading_bot.infrastructure.config_schemas import BinanceConfig
-from trading_bot.ports.execution_gateway_port import ExecutionGatewayPort
+from trading_bot.ports.execution_gateway_port import (
+    ExecutionGatewayPort,
+    HistoricalMultiTFWarmupPort,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
+class BinanceFuturesGatewayAdapter(ExecutionGatewayPort, HistoricalMultiTFWarmupPort):
     """Adapter connecting execution layer to Binance USD-M Perpetual Futures REST API."""
 
     def __init__(self, config: BinanceConfig, session: aiohttp.ClientSession | None) -> None:
@@ -363,11 +366,17 @@ class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
         """Close an active user data stream listenKey."""
         await self._request("DELETE", "/fapi/v1/listenKey", {"listenKey": listen_key}, False)
 
-    async def fetch_recent_klines_1m(self, symbol: str, limit: int) -> list[EnrichedMicroBarRecord]:
-        """Fetch recent 1m klines from Binance REST API and map to EnrichedMicroBarRecord."""
+    async def _fetch_recent_klines_by_interval(
+        self,
+        *,
+        symbol: str,
+        interval: str,
+        limit: int,
+    ) -> list[EnrichedMicroBarRecord]:
+        """Shared REST kline fetcher normalizing OHLCV + taker flows into EnrichedMicroBarRecord."""
         params: dict[str, Any] = {
             "symbol": symbol.upper(),
-            "interval": "1m",
+            "interval": interval,
             "limit": limit,
         }
         raw_klines = await self._request("GET", "/fapi/v1/klines", params, False)
@@ -383,6 +392,7 @@ class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
             trades = int(k[8])
             taker_buy_vol = float(k[9])
             taker_buy_quote_vol = float(k[10])
+            net_taker_flow = (2.0 * taker_buy_vol) - vol
             bars.append(
                 EnrichedMicroBarRecord(
                     symbol=symbol.upper(),
@@ -396,7 +406,7 @@ class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
                     taker_buy_vol=taker_buy_vol,
                     taker_buy_quote_vol=taker_buy_quote_vol,
                     trade_count=trades,
-                    ofi_sum=0.0,
+                    ofi_sum=net_taker_flow,
                     obi_mean=0.0,
                     obi_std=0.0,
                     spread_bps_mean=1.0,
@@ -405,6 +415,24 @@ class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
                 )
             )
         return bars
+
+    async def fetch_recent_klines_1m(self, symbol: str, limit: int) -> list[EnrichedMicroBarRecord]:
+        """Fetch recent 1m klines from Binance REST API and map to EnrichedMicroBarRecord."""
+        return await self._fetch_recent_klines_by_interval(
+            symbol=symbol,
+            interval="1m",
+            limit=limit,
+        )
+
+    async def fetch_recent_klines_30m(
+        self, symbol: str, limit: int
+    ) -> list[EnrichedMicroBarRecord]:
+        """Fetch recent 30m klines from Binance REST API for 350-bar feature warm-up."""
+        return await self._fetch_recent_klines_by_interval(
+            symbol=symbol,
+            interval="30m",
+            limit=limit,
+        )
 
     async def cancel_algo_order(self, symbol: str, algo_id: str) -> bool:
         """Cancel an active algo conditional order (SL/TP) by algo ID or clientAlgoId."""

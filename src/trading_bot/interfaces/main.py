@@ -274,13 +274,19 @@ class TradingBotSystemDaemon:
             db_pool=db_pool,
             tree_shap_config=tree_shap_cfg,
         )
-        trainer_adapter = LGBMModelTrainerAdapter.create_canonical(
-            tree_shap_config=tree_shap_cfg,
-        )
         if "DATASET_36M_PATH" in self._env and len(self._env["DATASET_36M_PATH"].strip()) > 0:
             dataset_36m_path = self._env["DATASET_36M_PATH"].strip()
         else:
             dataset_36m_path = "data/features_36m/36m_features_labels_all_4pairs.parquet"
+
+        if Path(dataset_36m_path).exists():
+            trainer_adapter = LGBMModelTrainerAdapter.create_36m_production(
+                tree_shap_config=tree_shap_cfg,
+            )
+        else:
+            trainer_adapter = LGBMModelTrainerAdapter.create_canonical(
+                tree_shap_config=tree_shap_cfg,
+            )
 
         self._training_service = ModelTrainingService(
             model_registry=self._model_registry,
@@ -331,6 +337,12 @@ class TradingBotSystemDaemon:
                 model_metadata=model_meta,
                 telegram_notifier=self._telegram_adapter,
             )
+            champion_cals = await self._model_registry.load_champion_calibrators()
+            if champion_cals is not None:
+                self._runner.reload_calibrators(
+                    calibrator_long=champion_cals[0],
+                    calibrator_short=champion_cals[1],
+                )
 
         # 8. Initialize Model Promotion Service
         self._promotion_service = ModelPromotionService(
@@ -945,6 +957,116 @@ class TradingBotSystemDaemon:
         )
         return f"Promoted {record.promoted_challenger_id} to Champion"
 
+    @staticmethod
+    def format_challenger_comparison_message(
+        *,
+        champ_meta: ModelArtifactMetadata | None,
+        chall_meta: ModelArtifactMetadata,
+    ) -> str:
+        """Format rich institutional Champion vs Challenger Walk-Forward comparison card."""
+        if champ_meta is None:
+            return (
+                f"🤖 *CHALLENGER MODEL ĐÃ HUẤN LUYỆN XONG*\n\n"
+                f"• *ID:* `{chall_meta.model_id}`\n"
+                f"• *Net Sharpe:* `{chall_meta.net_sharpe:.2f}`\n"
+                f"• *Brier Skill Score:* `{chall_meta.brier_skill_score:.4f}`\n"
+                f"• *Brier Score:* `{chall_meta.brier_score:.4f}`\n"
+                f"• *Max Drawdown:* `{chall_meta.max_drawdown_pct:.2%}`\n"
+                f"• *Số mẫu:* `{chall_meta.training_sample_count:,}`\n\n"
+                f"🏆 Dùng nút bên dưới hoặc `/approve_model` để xác nhận thăng hạng!"
+            )
+
+        sharpe_diff = chall_meta.net_sharpe - champ_meta.net_sharpe
+        bss_diff = chall_meta.brier_skill_score - champ_meta.brier_skill_score
+        bs_diff = chall_meta.brier_score - champ_meta.brier_score
+        dd_diff = chall_meta.max_drawdown_pct - champ_meta.max_drawdown_pct
+
+        sharpe_icon = "🟢" if sharpe_diff >= 0.0 else "🔴"
+        bss_icon = "🟢" if bss_diff >= 0.0 else "🔴"
+        bs_icon = "🟢" if bs_diff <= 0.0 else "🔴"
+        dd_icon = "🟢" if dd_diff <= 0.0 else "🔴"
+        verdict_text = (
+            "✅ KHUYẾN NGHỊ THĂNG HẠNG"
+            if sharpe_diff >= 0.0 and dd_diff <= 0.01
+            else "⚠️ CÂN NHẮC TRƯỚC KHI DUYỆT"
+        )
+
+        cb = champ_meta.backtest_metrics
+        nb = chall_meta.backtest_metrics
+        if cb is not None and nb is not None:
+            wr_c, wr_n = cb["win_rate"], nb["win_rate"]
+            pf_c, pf_n = cb["profit_factor"], nb["profit_factor"]
+            cal_c, cal_n = cb["calmar_ratio"], nb["calmar_ratio"]
+            ret_c, ret_n = cb["cumulative_return_pct"], nb["cumulative_return_pct"]
+            tr_c, tr_n = int(cb["trade_count"]), int(nb["trade_count"])
+            bps_c, bps_n = cb["mean_return_bps"], nb["mean_return_bps"]
+            auc_lc, auc_ln = cb["auc_long"], nb["auc_long"]
+            auc_sc, auc_sn = cb["auc_short"], nb["auc_short"]
+            ece_c, ece_n = cb["ece_avg"], nb["ece_avg"]
+            ll_c, ll_n = cb["log_loss"], nb["log_loss"]
+            sp_c, sp_n = cb["venn_abers_spread"], nb["venn_abers_spread"]
+            ood_c, ood_n = cb["ood_rejection_pct"], nb["ood_rejection_pct"]
+            oos_n = int(nb["oos_bars_evaluated"])
+
+            wr_icon = "🟢" if wr_n >= wr_c else "🔴"
+            pf_icon = "🟢" if pf_n >= pf_c else "🔴"
+            ret_icon = "🟢" if ret_n >= ret_c else "🔴"
+            cal_icon = "🟢" if cal_n >= cal_c else "🔴"
+            ece_icon = "🟢" if ece_n <= ece_c else "🔴"
+            ll_icon = "🟢" if ll_n <= ll_c else "🔴"
+
+            trade_sharpe_line = ""
+            if "trade_sharpe" in cb and "trade_sharpe" in nb:
+                ts_c = cb["trade_sharpe"]
+                ts_n = nb["trade_sharpe"]
+                ts_icon = "🟢" if ts_n >= ts_c else "🔴"
+                trade_sharpe_line = (
+                    f"• *Trade Sharpe (Local):* `{ts_c:.2f}` ➔ `{ts_n:.2f}` "
+                    f"({ts_icon} `{ts_n - ts_c:+.2f}`)\n"
+                )
+
+            return (
+                f"🏆 *BÁO CÁO ĐỐI ĐẦU CHAMPION vs CHALLENGER*\n"
+                f"_(Walk-Forward 36M | OOS: {oos_n:,} nến | Policy B / Live Sync)_\n\n"
+                f"• *Champion:* `{champ_meta.model_id}`\n"
+                f"• *Challenger:* `{chall_meta.model_id}`\n\n"
+                f"📈 *1. Hiệu suất Tài chính (Backtest):*\n"
+                f"• *Net Sharpe (30m TS):* `{champ_meta.net_sharpe:.2f}` ➔ `{chall_meta.net_sharpe:.2f}` ({sharpe_icon} `{sharpe_diff:+.2f}`)\n"
+                f"{trade_sharpe_line}"
+                f"• *Win Rate:* `{wr_c:.2%}` ➔ `{wr_n:.2%}` ({wr_icon} `{wr_n - wr_c:+.2%}`)\n"
+                f"• *Profit Factor:* `{pf_c:.3f}` ➔ `{pf_n:.3f}` ({pf_icon} `{pf_n - pf_c:+.3f}`)\n"
+                f"• *Calmar Ratio:* `{cal_c:.2f}` ➔ `{cal_n:.2f}` ({cal_icon} `{cal_n - cal_c:+.2f}`)\n"
+                f"• *Cum Return:* `{ret_c:.2%}` ➔ `{ret_n:.2%}` ({ret_icon} `{ret_n - ret_c:+.2%}`)\n"
+                f"• *Max DD (QK):* `{champ_meta.max_drawdown_pct:.2%}` ➔ `{chall_meta.max_drawdown_pct:.2%}` ({dd_icon} `{dd_diff:+.2%}`)\n"
+                f"• *Số lệnh / Exp:* `{tr_c}` (`{bps_c:+.1f} bps`) ➔ `{tr_n}` (`{bps_n:+.1f} bps`)\n\n"
+                f"🧠 *2. Độ chuẩn xác ML & Calibration:*\n"
+                f"• *ROC-AUC (L/S):* `{auc_lc:.4f}/{auc_sc:.4f}` ➔ `{auc_ln:.4f}/{auc_sn:.4f}`\n"
+                f"• *Binned ECE:* `{ece_c:.4f}` ➔ `{ece_n:.4f}` ({ece_icon} `{ece_n - ece_c:+.4f}`)\n"
+                f"• *Log-Loss:* `{ll_c:.4f}` ➔ `{ll_n:.4f}` ({ll_icon} `{ll_n - ll_c:+.4f}`)\n"
+                f"• *Venn-Abers Spread:* `{sp_c:.4f}` ➔ `{sp_n:.4f}`\n"
+                f"• *Brier / BSS:* `{champ_meta.brier_score:.4f}` / `{champ_meta.brier_skill_score:.4f}` ➔ `{chall_meta.brier_score:.4f}` / `{chall_meta.brier_skill_score:.4f}` ({bss_icon})\n"
+                f"• *OOD Reject Rate:* `{ood_c:.2f}%` ➔ `{ood_n:.2f}%`\n"
+                f"• *Train Samples:* `{champ_meta.training_sample_count:,}` ➔ `{chall_meta.training_sample_count:,}`\n\n"
+                f"🪙 *3. Sharpe theo Cặp tiền (Challenger):*\n"
+                f"`BTC: {nb['btc_sharpe']:.2f}` | `ETH: {nb['eth_sharpe']:.2f}` | `SOL: {nb['sol_sharpe']:.2f}` | `BNB: {nb['bnb_sharpe']:.2f}`\n\n"
+                f"🎯 *Kết luận:* {verdict_text}\n"
+                f"Bấm nút bên dưới để thăng hạng Challenger (Hot-Reload không dừng bot) hoặc dùng `/approve_model`:"
+            )
+
+        return (
+            f"🏆 *BÁO CÁO ĐỐI ĐẦU CHAMPION vs CHALLENGER*\n\n"
+            f"• *Champion (Đương kim):* `{champ_meta.model_id}`\n"
+            f"• *Challenger (Thách đấu):* `{chall_meta.model_id}`\n\n"
+            f"📊 *Bảng so sánh Định lượng:*\n"
+            f"1. *Net Sharpe:* `{champ_meta.net_sharpe:.2f}` ➔ `{chall_meta.net_sharpe:.2f}` ({sharpe_icon} `{sharpe_diff:+.2f}`)\n"
+            f"2. *Brier Skill (BSS):* `{champ_meta.brier_skill_score:.4f}` ➔ `{chall_meta.brier_skill_score:.4f}` ({bss_icon} `{bss_diff:+.4f}`)\n"
+            f"3. *Brier Score:* `{champ_meta.brier_score:.4f}` ➔ `{chall_meta.brier_score:.4f}` ({bs_icon} `{bs_diff:+.4f}`)\n"
+            f"4. *Max Drawdown:* `{champ_meta.max_drawdown_pct:.2%}` ➔ `{chall_meta.max_drawdown_pct:.2%}` ({dd_icon} `{dd_diff:+.2%}`)\n"
+            f"5. *Số mẫu (36M Rolling):* `{champ_meta.training_sample_count:,}` ➔ `{chall_meta.training_sample_count:,}`\n\n"
+            f"🎯 *Kết luận:* {verdict_text}\n"
+            f"Bấm nút bên dưới để thăng hạng Challenger (Hot-Reload không dừng bot) hoặc dùng `/approve_model`:"
+        )
+
     async def on_retrain_hook(self, mode: str) -> str:
         """Launch background async retraining of Challenger model."""
         training_svc = self._training_service
@@ -971,59 +1093,10 @@ class TradingBotSystemDaemon:
                         except (ChampionModelNotFoundError, ModelArtifactCorruptError):
                             champ_meta = None
 
-                    if champ_meta is not None:
-                        sharpe_diff = meta.net_sharpe - champ_meta.net_sharpe
-                        bss_diff = meta.brier_skill_score - champ_meta.brier_skill_score
-                        bs_diff = meta.brier_score - champ_meta.brier_score
-                        dd_diff = meta.max_drawdown_pct - champ_meta.max_drawdown_pct
-
-                        if sharpe_diff >= 0.0:
-                            sharpe_icon = "🟢"
-                        else:
-                            sharpe_icon = "🔴"
-                        if bss_diff >= 0.0:
-                            bss_icon = "🟢"
-                        else:
-                            bss_icon = "🔴"
-                        if bs_diff <= 0.0:
-                            bs_icon = "🟢"
-                        else:
-                            bs_icon = "🔴"
-                        if dd_diff <= 0.0:
-                            dd_icon = "🟢"
-                        else:
-                            dd_icon = "🔴"
-
-                        if sharpe_diff >= 0.0 and dd_diff <= 0.01:
-                            verdict_text = "✅ KHUYẾN NGHỊ THĂNG HẠNG"
-                        else:
-                            verdict_text = "⚠️ CÂN NHẮC TRƯỚC KHI DUYỆT"
-
-                        msg = (
-                            f"🏆 *BÁO CÁO ĐỐI ĐẦU CHAMPION vs CHALLENGER*\n\n"
-                            f"• *Champion (Đương kim):* `{champ_meta.model_id}`\n"
-                            f"• *Challenger (Thách đấu):* `{meta.model_id}`\n\n"
-                            f"📊 *Bảng so sánh Định lượng (Holdout OOS):*\n"
-                            f"1. *Net Sharpe:* `{champ_meta.net_sharpe:.2f}` ➔ `{meta.net_sharpe:.2f}` ({sharpe_icon} `{sharpe_diff:+.2f}`)\n"
-                            f"2. *Brier Skill (BSS):* `{champ_meta.brier_skill_score:.4f}` ➔ `{meta.brier_skill_score:.4f}` ({bss_icon} `{bss_diff:+.4f}`)\n"
-                            f"3. *Brier Score:* `{champ_meta.brier_score:.4f}` ➔ `{meta.brier_score:.4f}` ({bs_icon} `{bs_diff:+.4f}`)\n"
-                            f"4. *Max Drawdown:* `{champ_meta.max_drawdown_pct:.2%}` ➔ `{meta.max_drawdown_pct:.2%}` ({dd_icon} `{dd_diff:+.2%}`)\n"
-                            f"5. *Số mẫu (36M Rolling):* `{champ_meta.training_sample_count:,}` ➔ `{meta.training_sample_count:,}`\n\n"
-                            f"🎯 *Kết luận:* {verdict_text}\n"
-                            f"Bấm nút bên dưới để thăng hạng Challenger (Hot-Reload không dừng bot) hoặc dùng `/approve_model`:"
-                        )
-                    else:
-                        msg = (
-                            f"🤖 *CHALLENGER MODEL ĐÃ HUẤN LUYỆN XONG*\n\n"
-                            f"• *ID:* `{meta.model_id}`\n"
-                            f"• *Net Sharpe:* `{meta.net_sharpe:.2f}`\n"
-                            f"• *Brier Skill Score:* `{meta.brier_skill_score:.4f}`\n"
-                            f"• *Brier Score:* `{meta.brier_score:.4f}`\n"
-                            f"• *Max Drawdown:* `{meta.max_drawdown_pct:.2%}`\n"
-                            f"• *Số mẫu:* `{meta.training_sample_count:,}`\n\n"
-                            f"🏆 Dùng nút bên dưới hoặc `/approve_model` để xác nhận thăng hạng!"
-                        )
-
+                    msg = self.format_challenger_comparison_message(
+                        champ_meta=champ_meta,
+                        chall_meta=meta,
+                    )
                     approve_keyboard: list[list[TelegramInlineButton]] = [
                         [
                             TelegramInlineButton(

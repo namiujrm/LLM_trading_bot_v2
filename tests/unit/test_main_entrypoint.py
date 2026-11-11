@@ -14,7 +14,7 @@ Tests:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -33,6 +33,10 @@ from trading_bot.domain.entities.common.enums import (
     TradeSide,
 )
 from trading_bot.domain.entities.market.market_state import SemanticQuantPacket
+from trading_bot.domain.entities.ml.model_registry_entities import (
+    ModelArtifactMetadata,
+    ModelRole,
+)
 from trading_bot.domain.entities.risk.account_state import (
     AccountPortfolioContext,
     ActivePositionSnapshot,
@@ -922,3 +926,89 @@ async def test_daemon_initializes_model_services_and_wires_telegram_hooks(tmp_pa
     assert sent_kb[0][0].callback_data == "confirm_approve_model"
 
     await daemon.shutdown()
+
+
+def test_format_challenger_comparison_message_with_walk_forward_metrics() -> None:
+    """Verify full Walk-Forward 18-metric formatting in Champion vs Challenger Telegram report."""
+    now_dt = datetime.now(tz=UTC)
+    champ_bm: dict[str, float] = {
+        "win_rate": 0.5200,
+        "profit_factor": 1.380,
+        "calmar_ratio": 2.10,
+        "cumulative_return_pct": 0.2800,
+        "trade_count": 120.0,
+        "mean_return_bps": 23.3,
+        "auc_long": 0.5040,
+        "auc_short": 0.5080,
+        "ece_avg": 0.0250,
+        "log_loss": 0.6920,
+        "venn_abers_spread": 0.0040,
+        "ood_rejection_pct": 5.30,
+        "oos_bars_evaluated": 122640.0,
+        "btc_sharpe": -15.0,
+        "eth_sharpe": 35.0,
+        "sol_sharpe": 30.0,
+        "bnb_sharpe": 18.0,
+    }
+    chall_bm: dict[str, float] = {
+        "win_rate": 0.5271,
+        "profit_factor": 1.431,
+        "calmar_ratio": 2.45,
+        "cumulative_return_pct": 0.3387,
+        "trade_count": 129.0,
+        "mean_return_bps": 26.2,
+        "auc_long": 0.5043,
+        "auc_short": 0.5098,
+        "ece_avg": 0.0237,
+        "log_loss": 0.6917,
+        "venn_abers_spread": 0.0032,
+        "ood_rejection_pct": 5.23,
+        "oos_bars_evaluated": 122640.0,
+        "btc_sharpe": -17.4,
+        "eth_sharpe": 38.5,
+        "sol_sharpe": 31.6,
+        "bnb_sharpe": 20.1,
+        "trade_sharpe": 21.18,
+    }
+    champ_bm["trade_sharpe"] = 19.50
+    champ = ModelArtifactMetadata(
+        model_id="champ_wf_v1",
+        role=ModelRole.CHAMPION,
+        feature_names=["hurst_exponent_100"],
+        trained_at_utc=now_dt,
+        training_sample_count=151511,
+        net_sharpe=19.50,
+        brier_score=0.2495,
+        brier_skill_score=-0.0050,
+        max_drawdown_pct=0.0280,
+        file_checksum="abc",
+        backtest_metrics=champ_bm,
+    )
+    chall = ModelArtifactMetadata(
+        model_id="chall_wf_v2",
+        role=ModelRole.CHALLENGER,
+        feature_names=["hurst_exponent_100"],
+        trained_at_utc=now_dt,
+        training_sample_count=151511,
+        net_sharpe=21.18,
+        brier_score=0.2492,
+        brier_skill_score=-0.0040,
+        max_drawdown_pct=0.0241,
+        file_checksum="def",
+        backtest_metrics=chall_bm,
+    )
+
+    msg = TradingBotSystemDaemon.format_challenger_comparison_message(
+        champ_meta=champ,
+        chall_meta=chall,
+    )
+    assert "Walk-Forward 36M | OOS: 122,640 nến | Policy B" in msg
+    assert "Net Sharpe (30m TS)" in msg
+    assert "Trade Sharpe (Local)" in msg
+    assert "Profit Factor" in msg
+    assert "Calmar Ratio" in msg
+    assert "Win Rate" in msg
+    assert "ROC-AUC (L/S)" in msg
+    assert "Binned ECE" in msg
+    assert "ETH: 38.50" in msg
+    assert "KHUYẾN NGHỊ THĂNG HẠNG" in msg

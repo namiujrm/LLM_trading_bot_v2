@@ -44,6 +44,7 @@ def test_model_artifact_metadata_instantiation() -> None:
         brier_skill_score=0.155,
         max_drawdown_pct=0.045,
         file_checksum="sha256:abc123def456",
+        backtest_metrics=None,
     )
 
     assert meta.model_id == "champion_20261110_001"

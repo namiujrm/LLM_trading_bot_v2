@@ -21,6 +21,7 @@ from trading_bot.domain.entities.ml.model_registry_entities import (
 from trading_bot.ports.ml_model_port import (
     CausalBarrierModelPort,
     OODDetectorPort,
+    ProbabilityCalibratorPort,
     TreeSHAPExplainerPort,
 )
 
@@ -202,16 +203,50 @@ class ModelTrainerPort(Protocol):
         parquet_path: str,
         feature_names: Sequence[str],
         cal_ratio: float,
+        random_state: int,
     ) -> dict[str, float]:
-        """Evaluate fitted CausalBarrierModelPort on chronological holdout slice.
+        """Evaluate fitted model via full Walk-Forward Backtest (on 36M dataset) or holdout slice.
 
         Args:
             model: Fitted barrier model implementing CausalBarrierModelPort.
             parquet_path: Path to empirical parquet dataset.
             feature_names: Sequence of feature column names.
-            cal_ratio: Proportion of trailing rows used as calibration/validation slice.
+            cal_ratio: Proportion of trailing rows used as calibration/validation slice for small datasets.
+            random_state: Deterministic random seed used in walk-forward windows.
 
         Returns:
-            Dict containing 'brier_score', 'brier_skill_score', 'net_sharpe', 'max_drawdown_pct'.
+            Dict containing comprehensive financial and ML calibration metrics.
         """
+        ...
+
+    def fit_calibrators_on_parquet(
+        self,
+        *,
+        model: CausalBarrierModelPort,
+        parquet_path: str,
+        feature_names: Sequence[str],
+        cal_ratio: float,
+    ) -> tuple[ProbabilityCalibratorPort, ProbabilityCalibratorPort]:
+        """Fit dual Long/Short Venn-Abers probability calibrators on parquet calibration split."""
+        ...
+
+
+@runtime_checkable
+class CalibratorRegistryPort(Protocol):
+    """Port for persisting and loading Venn-Abers calibrators alongside model roles (Zero Defaults)."""
+
+    async def save_calibrators(
+        self,
+        *,
+        role: ModelRole,
+        calibrator_long: ProbabilityCalibratorPort,
+        calibrator_short: ProbabilityCalibratorPort,
+    ) -> str:
+        """Persist fitted Long/Short probability calibrators for a registered model role."""
+        ...
+
+    async def load_champion_calibrators(
+        self,
+    ) -> tuple[ProbabilityCalibratorPort, ProbabilityCalibratorPort] | None:
+        """Load active champion Venn-Abers calibrators if present, else return None."""
         ...

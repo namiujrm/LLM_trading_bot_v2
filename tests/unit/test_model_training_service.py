@@ -262,6 +262,13 @@ async def test_bootstrap_upgrade_from_legacy_and_rolling_window_parquet(tmp_path
     )
     assert upgraded_meta.training_sample_count == 1440  # 72% of 2000 rows
     assert upgraded_meta.brier_score > 0.0
+    assert upgraded_meta.backtest_metrics is not None
+    assert "win_rate" in upgraded_meta.backtest_metrics
+    assert "profit_factor" in upgraded_meta.backtest_metrics
+    assert "calmar_ratio" in upgraded_meta.backtest_metrics
+    assert "auc_long" in upgraded_meta.backtest_metrics
+    assert "ece_avg" in upgraded_meta.backtest_metrics
+    assert "log_loss" in upgraded_meta.backtest_metrics
 
     # 4. Verify roll_dataset_window FIFO mechanics with weekly updates
     weekly_rows = 20  # 10 new bars per symbol
@@ -308,3 +315,30 @@ async def test_bootstrap_upgrade_from_legacy_and_rolling_window_parquet(tmp_path
         feature_names=None,
     )
     assert chall_meta.training_sample_count == 1440
+
+
+def test_8_window_calendar_split_and_time_series_vs_trade_sharpe() -> None:
+    """Verify exact 8-window 36M splits and unbiased Time-Series vs Trade Sharpe distinction."""
+    bounds = LGBMModelTrainerAdapter.generate_calendar_window_bounds_ms(
+        min_dt=datetime(2023, 1, 1, 0, 0, tzinfo=UTC),
+        max_dt=datetime(2025, 12, 31, 23, 30, tzinfo=UTC),
+    )
+    assert len(bounds) == 8
+
+    # 10 trades (+30 bps wins / -20 bps losses) sparse across 500 30m bars (most bars flat 0.0)
+    executed = np.array(
+        [0.003, -0.002, 0.004, -0.001, 0.003, 0.002, -0.0015, 0.0035, 0.002, 0.001],
+        dtype=np.float64,
+    )
+    ts_series = np.zeros(500, dtype=np.float64)
+    for idx, val in enumerate(executed):
+        ts_series[idx * 50] = val
+
+    stats = LGBMModelTrainerAdapter.compute_trade_portfolio_stats(
+        executed_rets=executed,
+        time_series_rets=ts_series,
+        total_oos_bars=2000,
+    )
+    assert stats["trade_count"] == 10.0
+    # Time-series Sharpe accounts for 0.0 flat bars, so it is realistic & much lower than Trade Sharpe
+    assert stats["trade_sharpe"] > stats["net_sharpe"] > 0.0

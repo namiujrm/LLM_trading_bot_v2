@@ -36,10 +36,14 @@ from trading_bot.adapters.ml_engine.file_model_registry import (
 from trading_bot.adapters.ml_engine.native_treeshap_explainer import (
     NativeTreeSHAPExplainer,
 )
+from trading_bot.adapters.ml_engine.tabulated_venn_abers import (
+    TabulatedVennAbersCalibrator,
+)
 from trading_bot.domain.entities.ml.ml_configs import (
     CoherenceGateConfig,
     ConformalOODConfig,
     ConstrainedLGBMConfig,
+    FastVennAbersConfig,
     LGBMMonotonicConstraints,
     RidgePriorConfig,
     TreeSHAPConfig,
@@ -173,6 +177,7 @@ def create_metadata(
         brier_skill_score=0.14,
         max_drawdown_pct=0.065,
         file_checksum="uncalculated",
+        backtest_metrics=None,
     )
 
 
@@ -526,3 +531,68 @@ async def test_list_registered_models(
     assert len(all_models) == 3
     model_ids = {m.model_id for m in all_models}
     assert model_ids == {"champ_1", "chall_1", "arch_1"}
+
+
+@pytest.mark.asyncio
+async def test_save_and_promote_venn_abers_calibrators_roundtrip(
+    tmp_path: Path,
+    trained_model_and_ood: tuple[ConstrainedLGBMModel, ConformalSubspaceOODDetector, list[float]],
+    treeshap_components: tuple[NativeTreeSHAPExplainer, TreeSHAPConfig],
+) -> None:
+    """Verify Venn-Abers calibrators serialize cleanly, survive Challenger->Champion promotion, and reproduce predictions."""
+    model, ood_detector, _ = trained_model_and_ood
+    explainer, shap_cfg = treeshap_components
+
+    va_cfg = FastVennAbersConfig(
+        grid_points=500,
+        prob_clip_min=0.001,
+        prob_clip_max=0.999,
+        denom_eps=1e-6,
+        uncertainty_threshold=0.15,
+        calibration_floor=0.001,
+    )
+    va_long = TabulatedVennAbersCalibrator(config=va_cfg)
+    va_short = TabulatedVennAbersCalibrator(config=va_cfg)
+    scores = np.linspace(0.1, 0.9, 100).tolist()
+    y_l = [1 if s > 0.55 else 0 for s in scores]
+    y_s = [1 if s < 0.45 else 0 for s in scores]
+    va_long.fit(scores=scores, labels=y_l)
+    va_short.fit(scores=scores, labels=y_s)
+
+    registry = FileModelRegistry(
+        base_dir=tmp_path,
+        db_pool=None,
+        tree_shap_config=shap_cfg,
+    )
+    assert await registry.load_champion_calibrators() is None
+
+    await registry.save_model(
+        role=ModelRole.CHALLENGER,
+        model=model,
+        ood_detector=ood_detector,
+        explainer=explainer,
+        metadata=create_metadata("chall_va_001", ModelRole.CHALLENGER),
+    )
+    await registry.save_calibrators(
+        role=ModelRole.CHALLENGER,
+        calibrator_long=va_long,
+        calibrator_short=va_short,
+    )
+    assert (tmp_path / "challenger" / "venn_abers_cal.json").exists()
+
+    await registry.promote_challenger_to_champion(
+        user_id="tester",
+        rationale="Verify atomic promotion includes Venn-Abers calibrators",
+    )
+    loaded = await registry.load_champion_calibrators()
+    assert loaded is not None
+    loaded_l, loaded_s = loaded
+    for probe in (0.35, 0.52, 0.74):
+        orig_res = va_long.calibrate(probe)
+        load_res = loaded_l.calibrate(probe)
+        assert abs(orig_res.p_calibrated - load_res.p_calibrated) < 1e-12
+        assert abs(orig_res.uncertainty_width - load_res.uncertainty_width) < 1e-12
+        assert (
+            abs(va_short.calibrate(probe).p_calibrated - loaded_s.calibrate(probe).p_calibrated)
+            < 1e-12
+        )

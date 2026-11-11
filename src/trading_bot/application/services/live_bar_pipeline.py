@@ -16,7 +16,9 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from trading_bot.application.use_cases.evaluate_tiered_funnel import TieredFunnelInput
 from trading_bot.domain.entities.common.enums import MarketRegime
@@ -26,17 +28,23 @@ from trading_bot.domain.entities.market.market_state import (
     MultiTFBar,
     SemanticQuantPacket,
 )
+from trading_bot.domain.entities.ml.ml_configs import CoherenceGateConfig
 from trading_bot.domain.entities.ml.ml_predictions import (
     SHAPExplanationResult,
 )
+from trading_bot.domain.entities.quant.quant_configs import RegimeConfig
 from trading_bot.domain.entities.quant.quant_features import (
     MicrostructureMetrics,
     RegimeMetrics,
 )
 from trading_bot.domain.exceptions import InsufficientDataException
+from trading_bot.domain.services.ml.coherence_gate import CoherenceGate
+from trading_bot.domain.services.quant.fracdiff_transformer import FracDiffTransformerService
+from trading_bot.domain.services.quant.regime_detector import RegimeDetectorService
 from trading_bot.ports.ml_model_port import (
     CausalBarrierModelPort,
     OODDetectorPort,
+    ProbabilityCalibratorPort,
     TreeSHAPExplainerPort,
 )
 from trading_bot.ports.quant_engine_port import QuantEnginePort
@@ -56,6 +64,48 @@ CANONICAL_FEATURE_NAMES: tuple[str, ...] = (
     "funding_crowded_neg_z",
     "btc_lead_catchup_gap",
 )
+
+
+@dataclass
+class _Enriched30mMeta:
+    """Internal per-30m candle metadata supporting canonical 11-feature synthesis."""
+
+    timestamp_ms: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    quote_volume: float
+    taker_buy_vol: float
+    taker_buy_quote_vol: float
+    ofi_sum: float
+    vpin_bar: float
+    kyle_lambda_log_bar: float
+    vol_gk_ewma: float
+
+
+def _compute_single_bar_gk_raw(
+    *, open_p: float, high_p: float, low_p: float, close_p: float
+) -> float:
+    """Compute raw Garman-Klass volatility for a single OHLC bar."""
+    co_factor = 2.0 * math.log(2.0) - 1.0
+    log_hl = math.log(max(high_p / max(low_p, 1e-12), 1.0))
+    log_co = math.log(max(close_p / max(open_p, 1e-12), 1e-12))
+    gk_var = max(0.0, 0.5 * (log_hl**2) - co_factor * (log_co**2))
+    return math.sqrt(gk_var)
+
+
+def _compute_rolling_zscore_last(*, values: list[float], window: int) -> float:
+    """Compute clipped [-3, 3] rolling z-score of the final element over window."""
+    if len(values) < window or window <= 0:
+        return 0.0
+    tail = values[-window:]
+    mean_v = sum(tail) / float(window)
+    var_v = sum((x - mean_v) ** 2 for x in tail) / float(window)
+    std_v = math.sqrt(var_v)
+    z_val = (tail[-1] - mean_v) / (std_v + 1e-8)
+    return max(-3.0, min(3.0, z_val))
 
 
 class LiveBarPipelineService:
@@ -111,6 +161,31 @@ class LiveBarPipelineService:
         self._bars_1m: dict[str, list[EnrichedMicroBarRecord]] = {s: [] for s in self._symbols}
         self._bars_15m: dict[str, list[MultiTFBar]] = {s: [] for s in self._symbols}
         self._bars_30m: dict[str, list[MultiTFBar]] = {s: [] for s in self._symbols}
+        self._meta_30m: dict[str, list[_Enriched30mMeta]] = {s: [] for s in self._symbols}
+        self._va_long: ProbabilityCalibratorPort | None = None
+        self._va_short: ProbabilityCalibratorPort | None = None
+        self._fracdiff_weights: list[float] = FracDiffTransformerService().compute_weights(
+            d=0.40,
+            length=100,
+            threshold=1e-4,
+        )
+        self._coherence_gate: CoherenceGate = CoherenceGate(
+            config=CoherenceGateConfig(
+                gamma_conflict=2.0,
+                max_combined_probability=1.0,
+                min_probability_floor=0.0,
+            )
+        )
+        self._regime_svc: RegimeDetectorService = RegimeDetectorService()
+        self._canonical_regime_cfg: RegimeConfig = RegimeConfig(
+            hurst_window=100,
+            yang_zhang_window=20,
+            bipower_jump_confidence=0.99,
+            entropy_bins=10,
+            permutation_dimension=3,
+            tsallis_q=2.0,
+            division_eps=1e-12,
+        )
 
         # Latest states and outputs
         self._latest_micro: dict[str, MicrostructureMetrics] = {}
@@ -138,6 +213,7 @@ class LiveBarPipelineService:
             self._bars_1m[symbol] = []
             self._bars_15m[symbol] = []
             self._bars_30m[symbol] = []
+            self._meta_30m[symbol] = []
             self._vpin_history[symbol] = []
             self._alt_15m_returns[symbol] = []
             self._catchup_gaps[symbol] = []
@@ -202,16 +278,97 @@ class LiveBarPipelineService:
         if bar_close_ts % 1800000 == 0:
             await self._process_30m_candle_close(symbol, bar_close_ts)
 
-    async def warmup_historical_bars(self, symbol: str, bars: list[EnrichedMicroBarRecord]) -> None:
-        """Warm up rolling buffers with historical 1m bars without triggering live trading cycles."""
+    def set_calibrators(
+        self,
+        *,
+        calibrator_long: ProbabilityCalibratorPort | None,
+        calibrator_short: ProbabilityCalibratorPort | None,
+    ) -> None:
+        """Attach or hot-reload fitted Venn-Abers Long/Short calibrators."""
+        self._va_long = calibrator_long
+        self._va_short = calibrator_short
+
+    async def warmup_historical_30m_bars(
+        self,
+        symbol: str,
+        bars_30m: list[EnrichedMicroBarRecord],
+    ) -> None:
+        """Warm up rolling 30m buffers (350+ bars) for 336-bar funding z-score and 100-bar Hurst."""
         upper_sym = symbol.upper()
         if upper_sym not in self._bars_1m:
             self._bars_1m[upper_sym] = []
             self._bars_15m[upper_sym] = []
-            self._bars_30m[upper_sym] = []
+        self._bars_30m[upper_sym] = []
+        self._meta_30m[upper_sym] = []
+        if upper_sym not in self._vpin_history:
             self._vpin_history[upper_sym] = []
+        if upper_sym not in self._alt_15m_returns:
             self._alt_15m_returns[upper_sym] = []
+        if upper_sym not in self._catchup_gaps:
             self._catchup_gaps[upper_sym] = []
+
+        now_ms = int(datetime.now(UTC).timestamp() * 1000.0)
+        sorted_30m = sorted(bars_30m, key=lambda b: b.open_time_ms)
+        for rec in sorted_30m:
+            if rec.open_time_ms + 1800000 > now_ms:
+                continue
+            bar_30m = MultiTFBar(
+                symbol=upper_sym,
+                timeframe="30m",
+                timestamp_ms=rec.open_time_ms,
+                open=rec.open,
+                high=rec.high,
+                low=rec.low,
+                close=rec.close,
+                volume=rec.volume,
+            )
+            tot_usd = rec.volume * rec.close
+            taker_usd = rec.taker_buy_vol * rec.close
+            sv_flow = abs((2.0 * taker_usd) - tot_usd)
+            dp = abs(rec.close - rec.open) / max(rec.open, 1e-12)
+            kyle_raw = (dp * sv_flow) / ((sv_flow * sv_flow) + 1e-12)
+            kyle_log = max(0.0, min(10.0, math.log(kyle_raw * 1e6 + 1.0)))
+            vpin_val = max(
+                0.0,
+                min(
+                    1.0,
+                    abs((2.0 * rec.taker_buy_quote_vol) - rec.quote_volume)
+                    / (rec.quote_volume + 1e-12),
+                ),
+            )
+            self._upsert_30m_bar_and_meta(
+                symbol=upper_sym,
+                bar_30m=bar_30m,
+                quote_volume=rec.quote_volume,
+                taker_buy_vol=rec.taker_buy_vol,
+                taker_buy_quote_vol=rec.taker_buy_quote_vol,
+                ofi_sum=rec.ofi_sum,
+                vpin_bar=vpin_val,
+                kyle_lambda_log_bar=kyle_log,
+            )
+
+        if self._bars_30m[upper_sym]:
+            self._current_prices[upper_sym] = self._bars_30m[upper_sym][-1].close
+        self._update_atr_30m(upper_sym)
+
+        logger.info(
+            "Warmed up 30m buffer for %s with %d closed 30m bars.",
+            upper_sym,
+            len(self._bars_30m[upper_sym]),
+        )
+
+    async def warmup_historical_bars(self, symbol: str, bars: list[EnrichedMicroBarRecord]) -> None:
+        """Warm up rolling buffers with historical 1m bars without triggering live trading cycles."""
+        upper_sym = symbol.upper()
+        self._bars_1m[upper_sym] = []
+        self._bars_15m[upper_sym] = []
+        if upper_sym not in self._bars_30m:
+            self._bars_30m[upper_sym] = []
+        if upper_sym not in self._meta_30m:
+            self._meta_30m[upper_sym] = []
+        self._vpin_history[upper_sym] = []
+        self._alt_15m_returns[upper_sym] = []
+        self._catchup_gaps[upper_sym] = []
 
         sorted_bars = sorted(bars, key=lambda b: b.open_time_ms)
         for b in sorted_bars:
@@ -355,8 +512,94 @@ class LiveBarPipelineService:
             if len(self._bars_15m[symbol]) > 100:
                 self._bars_15m[symbol].pop(0)
 
+    def _upsert_30m_bar_and_meta(
+        self,
+        *,
+        symbol: str,
+        bar_30m: MultiTFBar,
+        quote_volume: float,
+        taker_buy_vol: float,
+        taker_buy_quote_vol: float,
+        ofi_sum: float,
+        vpin_bar: float,
+        kyle_lambda_log_bar: float,
+    ) -> None:
+        """Append or update a closed 30m bar & aligned microstructure metadata (max 400 bars)."""
+        bars_list = self._bars_30m[symbol]
+        meta_list = self._meta_30m[symbol]
+        gk_raw = _compute_single_bar_gk_raw(
+            open_p=bar_30m.open,
+            high_p=bar_30m.high,
+            low_p=bar_30m.low,
+            close_p=bar_30m.close,
+        )
+        ewma_alpha = 2.0 / 13.0
+
+        # Check whether bucket already exists (e.g. historical warmup replaced by 1m aggregate)
+        existing_idx: int | None = None
+        for idx in range(len(bars_list) - 1, -1, -1):
+            if bars_list[idx].timestamp_ms == bar_30m.timestamp_ms:
+                existing_idx = idx
+                break
+            if bars_list[idx].timestamp_ms < bar_30m.timestamp_ms:
+                break
+
+        if existing_idx is not None:
+            prev_ewma = meta_list[existing_idx - 1].vol_gk_ewma if existing_idx > 0 else gk_raw
+            vol_gk_ewma = (
+                max(0.0001, gk_raw)
+                if existing_idx == 0
+                else max(0.0001, ewma_alpha * gk_raw + (1.0 - ewma_alpha) * prev_ewma)
+            )
+            bars_list[existing_idx] = bar_30m
+            meta_list[existing_idx] = _Enriched30mMeta(
+                timestamp_ms=bar_30m.timestamp_ms,
+                open=bar_30m.open,
+                high=bar_30m.high,
+                low=bar_30m.low,
+                close=bar_30m.close,
+                volume=bar_30m.volume,
+                quote_volume=quote_volume,
+                taker_buy_vol=taker_buy_vol,
+                taker_buy_quote_vol=taker_buy_quote_vol,
+                ofi_sum=ofi_sum,
+                vpin_bar=vpin_bar,
+                kyle_lambda_log_bar=kyle_lambda_log_bar,
+                vol_gk_ewma=vol_gk_ewma,
+            )
+            return
+
+        if meta_list:
+            prev_ewma = meta_list[-1].vol_gk_ewma
+            vol_gk_ewma = max(0.0001, ewma_alpha * gk_raw + (1.0 - ewma_alpha) * prev_ewma)
+        else:
+            vol_gk_ewma = max(0.0001, gk_raw)
+
+        bars_list.append(bar_30m)
+        meta_list.append(
+            _Enriched30mMeta(
+                timestamp_ms=bar_30m.timestamp_ms,
+                open=bar_30m.open,
+                high=bar_30m.high,
+                low=bar_30m.low,
+                close=bar_30m.close,
+                volume=bar_30m.volume,
+                quote_volume=quote_volume,
+                taker_buy_vol=taker_buy_vol,
+                taker_buy_quote_vol=taker_buy_quote_vol,
+                ofi_sum=ofi_sum,
+                vpin_bar=vpin_bar,
+                kyle_lambda_log_bar=kyle_lambda_log_bar,
+                vol_gk_ewma=vol_gk_ewma,
+            )
+        )
+        if len(bars_list) > 400:
+            bars_list.pop(0)
+        if len(meta_list) > 400:
+            meta_list.pop(0)
+
     def _resample_30m(self, symbol: str, bar: EnrichedMicroBarRecord) -> None:
-        """Resample 1m bars into 30m multi-timeframe bars."""
+        """Resample 1m bars into 30m multi-timeframe bars & compute 30m microstructure stats."""
         interval_ms = 1800000
         bucket_ts = (bar.open_time_ms // interval_ms) * interval_ms
         matching_1m = [
@@ -378,11 +621,42 @@ class LiveBarPipelineService:
             volume=sum(b.volume for b in matching_1m),
         )
 
-        # On 30m close boundary, append bar to completed buffer
+        # On 30m close boundary, aggregate exact 1m VPIN, Kyle Lambda, QuoteVol, TakerBuy & OFI
         if (bar.open_time_ms + 60000) % interval_ms == 0:
-            self._bars_30m[symbol].append(bar_30m)
-            if len(self._bars_30m[symbol]) > 100:
-                self._bars_30m[symbol].pop(0)
+            # Guard against overwriting a full 30m historical warmup bar with an incomplete leading 1m slice
+            has_existing_bucket = any(b.timestamp_ms == bucket_ts for b in self._bars_30m[symbol])
+            if has_existing_bucket and len(matching_1m) < 25:
+                return
+            q_vol_sum = sum(b.quote_volume for b in matching_1m)
+            tb_vol_sum = sum(b.taker_buy_vol for b in matching_1m)
+            tb_qvol_sum = sum(b.taker_buy_quote_vol for b in matching_1m)
+            ofi_total = sum(b.ofi_sum for b in matching_1m)
+
+            sv_q_sum = sum(abs((2.0 * b.taker_buy_quote_vol) - b.quote_volume) for b in matching_1m)
+            vpin_val = max(0.0, min(1.0, sv_q_sum / (q_vol_sum + 1e-12)))
+
+            sum_dp_sv = 0.0
+            sum_sv_sq = 0.0
+            for b in matching_1m:
+                dp = abs(b.close - b.open) / max(b.open, 1e-12)
+                tot_usd = b.volume * b.close
+                taker_usd = b.taker_buy_vol * b.close
+                sv = abs((2.0 * taker_usd) - tot_usd)
+                sum_dp_sv += dp * sv
+                sum_sv_sq += sv * sv
+            kyle_raw = sum_dp_sv / (sum_sv_sq + 1e-12)
+            kyle_log = max(0.0, min(10.0, math.log(kyle_raw * 1e6 + 1.0)))
+
+            self._upsert_30m_bar_and_meta(
+                symbol=symbol,
+                bar_30m=bar_30m,
+                quote_volume=q_vol_sum,
+                taker_buy_vol=tb_vol_sum,
+                taker_buy_quote_vol=tb_qvol_sum,
+                ofi_sum=ofi_total,
+                vpin_bar=vpin_val,
+                kyle_lambda_log_bar=kyle_log,
+            )
 
     def _update_atr_30m(self, symbol: str) -> None:
         """Compute rolling 30m Average True Range (ATR) for sizing."""
@@ -454,17 +728,32 @@ class LiveBarPipelineService:
         self._latest_quant_packets[symbol] = quant_packet
 
         bar_dt = datetime.fromtimestamp(close_ts_ms / 1000.0, tz=UTC)
+        canonical_features_11 = self._compute_canonical_features_11(symbol)
         # 2. Causal Barrier Model ML Inference & Attribution (Fail-Safe Capital Protection)
         try:
-            sample_features_11 = quant_packet.trajectory_vector_16d[:11]
-            barrier_pred = self._barrier_model.predict(sample_features_11)
+            barrier_pred = self._barrier_model.predict(canonical_features_11)
 
-            # 3. Conformal Subspace OOD Detection
-            ood_result = self._ood_detector.predict(sample_features_11)
+            # 3. Conformal Subspace OOD Detection (6D subspace when configured, else full 11D)
+            ood_features: list[float] = canonical_features_11
+            if hasattr(self._ood_detector, "config"):
+                ood_obj: Any = self._ood_detector
+                ood_cfg_obj: Any = ood_obj.config
+                if hasattr(ood_cfg_obj, "feature_names"):
+                    ood_feature_names: tuple[str, ...] = tuple(
+                        str(f_name) for f_name in ood_cfg_obj.feature_names
+                    )
+                    if len(ood_feature_names) != len(canonical_features_11):
+                        name_to_idx = {
+                            name: idx for idx, name in enumerate(CANONICAL_FEATURE_NAMES)
+                        }
+                        ood_features = [
+                            canonical_features_11[name_to_idx[f]] for f in ood_feature_names
+                        ]
+            ood_result = self._ood_detector.predict(ood_features)
 
             # 4. Native TreeSHAP Attribution
             shap_result = self._treeshap_explainer.explain(
-                sample_features_11,
+                canonical_features_11,
                 CANONICAL_FEATURE_NAMES,
                 self._barrier_model,
                 symbol,
@@ -472,9 +761,26 @@ class LiveBarPipelineService:
                 "long_barrier",
             )
             self._latest_shap_results[symbol] = shap_result
-            p_long_val = barrier_pred.p_long
-            p_short_val = barrier_pred.p_short
-            unc_width = max(0.01, min(0.50, barrier_pred.coherence_penalty + 0.02))
+
+            if self._va_long is not None and self._va_short is not None:
+                cal_l = self._va_long.calibrate(barrier_pred.p_raw_long)
+                cal_s = self._va_short.calibrate(barrier_pred.p_raw_short)
+                coherent_res = self._coherence_gate.enforce_coherence(
+                    p_raw_long=cal_l.p_calibrated,
+                    p_raw_short=cal_s.p_calibrated,
+                )
+                p_long_val = coherent_res.p_long
+                p_short_val = coherent_res.p_short
+                raw_unc = (
+                    cal_l.uncertainty_width
+                    if p_long_val >= p_short_val
+                    else cal_s.uncertainty_width
+                )
+                unc_width = max(1e-4, min(0.50, raw_unc))
+            else:
+                p_long_val = barrier_pred.p_long
+                p_short_val = barrier_pred.p_short
+                unc_width = max(0.01, min(0.50, barrier_pred.coherence_penalty + 0.02))
             is_ood_val = ood_result.is_ood
         except Exception as exc:
             logger.error(
@@ -514,7 +820,7 @@ class LiveBarPipelineService:
             vpin_percentile=min(100.0, max(0.0, micro_metrics.vpin * 100.0)),
             liq_long_z=liq_long_z,
             liq_short_z=liq_short_z,
-            funding_z=0.0,
+            funding_z=canonical_features_11[8] - canonical_features_11[9],
             vpin_slope_3bars=vpin_slope,
             btc_15m_return_z=btc_15m_return_z,
             btc_lead_beta=btc_lead_beta,
@@ -614,6 +920,125 @@ class LiveBarPipelineService:
             beta = 1.0
 
         return beta, z_gap
+
+    def _compute_canonical_features_11(self, symbol: str) -> list[float]:
+        """Synthesize the exact 11 CANONICAL_FEATURES matching 36M training pipeline."""
+        meta_list = self._meta_30m[symbol]
+        n_bars = len(meta_list)
+        if n_bars == 0:
+            return [0.50, 0.50, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+        closes = [m.close for m in meta_list]
+        log_rets = [
+            math.log(max(closes[i], 1e-12) / max(closes[i - 1], 1e-12)) for i in range(1, n_bars)
+        ]
+
+        # 1. hurst_exponent_100 (100-bar 30m log returns via Anis-Lloyd)
+        if len(log_rets) >= 20:
+            hurst_win = log_rets[-100:]
+            hurst_val = self._regime_svc.compute_anis_lloyd_hurst(
+                hurst_win,
+                self._canonical_regime_cfg,
+            )
+        else:
+            hurst_val = 0.50
+
+        # 2. shannon_entropy_50 (50-bar 30m log returns, 10 bins)
+        if len(log_rets) >= 10:
+            shannon_win = log_rets[-50:]
+            shannon_val = self._regime_svc.compute_shannon_entropy(
+                shannon_win,
+                self._canonical_regime_cfg,
+            )
+        else:
+            shannon_val = 0.50
+
+        # 3. fracdiff_momentum_z (d=0.40, length<=100, thr=1e-4, z_window=24)
+        w = self._fracdiff_weights
+        w_len = len(w)
+        z_window = 24
+        if n_bars >= w_len + z_window:
+            log_c = [math.log(max(c, 1e-12)) for c in closes]
+            fd_vals: list[float] = []
+            for t in range(n_bars - z_window, n_bars):
+                acc = sum(w[k] * log_c[t - k] for k in range(w_len))
+                fd_vals.append(acc)
+            fracdiff_z = _compute_rolling_zscore_last(values=fd_vals, window=z_window)
+        else:
+            fracdiff_z = 0.0
+
+        # 4. vpin_toxicity_pct (per-bar quote volume imbalance ratio)
+        vpin_val = max(0.0, min(1.0, meta_list[-1].vpin_bar))
+
+        # 5. taker_cvd_z_24 (24-bar z-score of 24-bar rolling net taker volume)
+        net_taker_arr = [(2.0 * m.taker_buy_vol) - m.volume for m in meta_list]
+        if n_bars >= z_window * 2:
+            rolling_cvd: list[float] = []
+            for idx in range(n_bars - z_window, n_bars):
+                rolling_cvd.append(sum(net_taker_arr[idx - z_window + 1 : idx + 1]))
+            cvd_z = _compute_rolling_zscore_last(values=rolling_cvd, window=z_window)
+        else:
+            cvd_z = 0.0
+
+        # 6. ofi_imbalance_z (24-bar z-score of 30m ofi_sum)
+        ofi_arr = [m.ofi_sum for m in meta_list]
+        ofi_z = _compute_rolling_zscore_last(values=ofi_arr, window=z_window)
+
+        # 7. kyle_lambda_log
+        kyle_val = max(0.0, min(10.0, meta_list[-1].kyle_lambda_log_bar))
+
+        # 8. oi_directional_score (6-bar 3h normalized price + net taker composite)
+        mom_window = 6
+        if n_bars > mom_window:
+            cur = meta_list[-1]
+            denom_vol = max(cur.vol_gk_ewma, 1e-4) * cur.close * math.sqrt(float(mom_window))
+            zp = math.tanh((cur.close - closes[-1 - mom_window]) / max(denom_vol, 1e-12))
+            vol_sum = sum(m.volume for m in meta_list[-mom_window:])
+            net_sum = sum(net_taker_arr[-mom_window:])
+            zf = net_sum / max(vol_sum, 1e-12)
+            oi_score = max(-1.0, min(1.0, (0.5 * zp) + (0.5 * zf)))
+        else:
+            oi_score = 0.0
+
+        # 9 & 10. funding_crowded_pos_z & neg_z (336-bar 7-day rolling VWAP premium z-score)
+        funding_window = 336
+        if n_bars >= funding_window:
+            prem_arr = [
+                ((m.quote_volume / max(m.volume, 1e-12)) - m.close) / max(m.close, 1e-12)
+                for m in meta_list[-funding_window:]
+            ]
+            z_prem = _compute_rolling_zscore_last(values=prem_arr, window=funding_window)
+            f_pos_z = max(0.0, min(3.0, z_prem))
+            f_neg_z = max(0.0, min(3.0, -z_prem))
+        else:
+            f_pos_z = 0.0
+            f_neg_z = 0.0
+
+        # 11. btc_lead_catchup_gap (6h 12-bar BTC return minus asset return)
+        if symbol != "BTCUSDT" and "BTCUSDT" in self._meta_30m:
+            btc_meta = self._meta_30m["BTCUSDT"]
+            if len(btc_meta) >= 13 and n_bars >= 13:
+                btc_ret_6h = (btc_meta[-1].close / max(btc_meta[-13].close, 1e-12)) - 1.0
+                sym_ret_6h = (closes[-1] / max(closes[-13], 1e-12)) - 1.0
+                btc_gap = max(-3.0, min(3.0, btc_ret_6h - sym_ret_6h))
+            else:
+                btc_gap = 0.0
+        else:
+            btc_gap = 0.0
+
+        return [
+            hurst_val,
+            shannon_val,
+            fracdiff_z,
+            vpin_val,
+            cvd_z,
+            ofi_z,
+            kyle_val,
+            oi_score,
+            f_pos_z,
+            f_neg_z,
+            btc_gap,
+        ]
 
     # -------------------------------------------------------------------------
     # Public Accessors & Status Queries
