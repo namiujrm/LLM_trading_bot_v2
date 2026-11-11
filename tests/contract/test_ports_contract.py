@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from trading_bot.domain.entities.common.enums import ExecutionMode
 from trading_bot.domain.entities.execution.trade_blueprint import BracketOrderTicket
 from trading_bot.domain.entities.market.market_state import MicroBar1m, MultiTFBar
@@ -127,6 +129,27 @@ def test_execution_gateway_port_structural_conformance() -> None:
 
         async def fetch_pending_orders(self) -> list[PendingOrderSnapshot]:
             return []
+
+        async def cancel_algo_order(self, symbol: str, algo_id: str) -> bool:
+            return True
+
+        async def fetch_open_algo_orders(self, symbol: str) -> list[dict[str, Any]]:
+            return []
+
+        async def fetch_symbol_filters(self) -> dict[str, Any]:
+            return {}
+
+        async def fetch_recent_klines_1m(self, symbol: str, limit: int) -> list[Any]:
+            return []
+
+        async def create_user_data_stream(self) -> str:
+            return "listen_key_123"
+
+        async def keepalive_user_data_stream(self, listen_key: str) -> None:
+            pass
+
+        async def close_user_data_stream(self, listen_key: str) -> None:
+            pass
 
     dummy = DummyExecutionGateway()
     assert isinstance(dummy, ExecutionGatewayPort)
@@ -384,7 +407,6 @@ def test_probability_calibrator_port_structural_conformance() -> None:
 def test_tree_shap_explainer_port_structural_conformance() -> None:
     from collections.abc import Sequence
     from datetime import datetime
-    from typing import Any
 
     from trading_bot.adapters.ml_engine.native_treeshap_explainer import (
         NativeTreeSHAPExplainer,
@@ -501,7 +523,6 @@ def test_macro_sentinel_port_structural_conformance() -> None:
 
 
 def test_market_scout_port_structural_conformance() -> None:
-    from typing import Any
 
     from trading_bot.adapters.agents.scout_agent import MarketScoutAdapter
     from trading_bot.domain.entities.common.enums import PlaybookType, TradeSide
@@ -533,7 +554,6 @@ def test_market_scout_port_structural_conformance() -> None:
 
 
 def test_trade_architect_port_structural_conformance() -> None:
-    from typing import Any
 
     from trading_bot.adapters.agents.architect_agent import TradeArchitectAdapter
     from trading_bot.domain.entities.common.enums import EntryOrderType
@@ -566,7 +586,6 @@ def test_trade_architect_port_structural_conformance() -> None:
 
 
 def test_risk_arbiter_port_structural_conformance() -> None:
-    from typing import Any
 
     from trading_bot.adapters.agents.arbiter_agent import RiskArbiterAdapter
     from trading_bot.domain.entities.common.enums import (
@@ -604,7 +623,6 @@ def test_risk_arbiter_port_structural_conformance() -> None:
 
 
 def test_post_mortem_judge_port_structural_conformance() -> None:
-    from typing import Any
 
     from trading_bot.domain.entities.common.enums import OutcomeCategory
     from trading_bot.domain.entities.execution.shadow_order import ShadowOrderRecord
@@ -630,3 +648,91 @@ def test_post_mortem_judge_port_structural_conformance() -> None:
 
     dummy = DummyJudge()
     assert isinstance(dummy, PostMortemJudgePort)
+
+
+def test_math_alpha_agent_port_structural_conformance() -> None:
+
+    from trading_bot.adapters.agents.math_alpha_agent import MathAlphaAgentAdapter
+    from trading_bot.domain.entities.quant.symbolic_alpha import SymbolicAlphaCandidate
+    from trading_bot.ports.math_alpha_agent_port import MathAlphaAgentPort
+
+    class DummyMathAlphaAgent:
+        async def generate_candidates_for_cluster(
+            self,
+            cluster_name: str,
+            blindspots: list[dict[str, Any]],
+            decayed_alphas: list[str],
+            target_count: int,
+        ) -> list[SymbolicAlphaCandidate]:
+            return []
+
+    dummy = DummyMathAlphaAgent()
+    assert isinstance(dummy, MathAlphaAgentPort)
+    assert issubclass(MathAlphaAgentAdapter, MathAlphaAgentPort)
+
+
+def test_model_tournament_notifier_port_structural_conformance() -> None:
+    from trading_bot.domain.entities.quant.symbolic_alpha import (
+        ModelTournamentReport,
+        TournamentVerdict,
+    )
+    from trading_bot.ports.model_tournament_port import ModelTournamentNotifierPort
+
+    class DummyTournamentNotifier:
+        async def present_tournament_report(
+            self,
+            report: ModelTournamentReport,
+        ) -> TournamentVerdict:
+            return TournamentVerdict.KEEP_CHAMPION
+
+    dummy = DummyTournamentNotifier()
+    assert isinstance(dummy, ModelTournamentNotifierPort)
+
+
+def test_model_registry_port_structural_conformance() -> None:
+    from trading_bot.domain.entities.ml.model_registry_entities import (
+        ModelArtifactMetadata,
+        ModelPromotionRecord,
+        ModelRole,
+    )
+    from trading_bot.ports.ml_model_port import (
+        CausalBarrierModelPort,
+        OODDetectorPort,
+        TreeSHAPExplainerPort,
+    )
+    from trading_bot.ports.model_registry_port import ModelRegistryPort
+
+    class DummyModelRegistry:
+        async def load_champion_model(
+            self,
+        ) -> tuple[
+            CausalBarrierModelPort, OODDetectorPort, TreeSHAPExplainerPort, ModelArtifactMetadata
+        ]:
+            raise NotImplementedError
+
+        async def save_model(
+            self,
+            *,
+            role: ModelRole,
+            model: CausalBarrierModelPort,
+            ood_detector: OODDetectorPort,
+            explainer: TreeSHAPExplainerPort,
+            metadata: ModelArtifactMetadata,
+        ) -> str:
+            return "dummy_path"
+
+        async def promote_challenger_to_champion(
+            self,
+            *,
+            user_id: str,
+            rationale: str,
+        ) -> ModelPromotionRecord:
+            raise NotImplementedError
+
+        async def list_registered_models(
+            self,
+        ) -> list[ModelArtifactMetadata]:
+            return []
+
+    dummy = DummyModelRegistry()
+    assert isinstance(dummy, ModelRegistryPort)

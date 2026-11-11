@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import math
 import time
 import urllib.parse
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 
@@ -17,11 +18,14 @@ from trading_bot.domain.entities.common.enums import (
     TradeSide,
 )
 from trading_bot.domain.entities.execution.trade_blueprint import BracketOrderTicket
+from trading_bot.domain.entities.market.market_state import EnrichedMicroBarRecord
+from trading_bot.domain.entities.market.symbol_filters import SymbolFilterRule
 from trading_bot.domain.entities.risk.account_state import (
     AccountPortfolioContext,
     ActivePositionSnapshot,
     PendingOrderSnapshot,
 )
+from trading_bot.domain.exceptions import ExchangeFilterViolationError
 from trading_bot.domain.services.risk.risk_calculator import DeterministicRiskCalculator
 from trading_bot.infrastructure.config_schemas import BinanceConfig
 from trading_bot.ports.execution_gateway_port import ExecutionGatewayPort
@@ -37,6 +41,127 @@ class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
         self._session: aiohttp.ClientSession | None = session
         self._owns_session: bool = session is None
         self._time_offset_ms: int = 0
+        self._symbol_filters: dict[str, SymbolFilterRule] = {}
+        self._filters_last_synced_time: float = 0.0
+
+    @property
+    def symbol_filters(self) -> dict[str, SymbolFilterRule]:
+        """Return a copy of cached symbol filter rules."""
+        return dict(self._symbol_filters)
+
+    def set_symbol_filter(self, rule: SymbolFilterRule) -> None:
+        """Register or update a symbol filter rule directly."""
+        self._symbol_filters[rule.symbol.upper()] = rule
+
+    async def fetch_symbol_filters(self) -> dict[str, SymbolFilterRule]:
+        """Fetch or return cached symbol filter rules (refreshes if older than 24h)."""
+        current_time: float = time.monotonic()
+        if not self._symbol_filters or (current_time - self._filters_last_synced_time) > 86400.0:
+            await self.sync_exchange_filters()
+        return dict(self._symbol_filters)
+
+    async def sync_exchange_filters(self) -> dict[str, SymbolFilterRule]:
+        """Fetch exchangeInfo from Binance Futures and parse symbol filter rules."""
+        data = await self._request("GET", "/fapi/v1/exchangeInfo", {}, False)
+        new_filters: dict[str, SymbolFilterRule] = {}
+        if "symbols" in data:
+            for sym_info in data["symbols"]:
+                sym_name = str(sym_info["symbol"]).upper()
+                if "pricePrecision" in sym_info:
+                    price_prec = int(sym_info["pricePrecision"])
+                else:
+                    price_prec = 2
+
+                if "quantityPrecision" in sym_info:
+                    qty_prec = int(sym_info["quantityPrecision"])
+                else:
+                    qty_prec = 3
+
+                price_tick = 0.1
+                qty_step = 0.001
+                min_q = 0.001
+                max_q = 1000000.0
+                min_notional = 5.0
+
+                if "filters" in sym_info:
+                    for f in sym_info["filters"]:
+                        if "filterType" not in f:
+                            continue
+                        ftype = f["filterType"]
+                        if ftype == "PRICE_FILTER":
+                            if "tickSize" in f:
+                                price_tick = float(f["tickSize"])
+                        elif ftype == "LOT_SIZE":
+                            if "stepSize" in f:
+                                qty_step = float(f["stepSize"])
+                            if "minQty" in f:
+                                min_q = float(f["minQty"])
+                            if "maxQty" in f:
+                                max_q = float(f["maxQty"])
+                        elif ftype in ("MIN_NOTIONAL", "NOTIONAL") and "notional" in f:
+                            min_notional = float(f["notional"])
+
+                s_step = f"{qty_step:.10f}".rstrip("0")
+                if "." in s_step:
+                    calculated_qty_prec = len(s_step.split(".")[1])
+                    if calculated_qty_prec > qty_prec:
+                        qty_prec = calculated_qty_prec
+
+                s_tick = f"{price_tick:.10f}".rstrip("0")
+                if "." in s_tick:
+                    calculated_price_prec = len(s_tick.split(".")[1])
+                    if calculated_price_prec > price_prec:
+                        price_prec = calculated_price_prec
+
+                new_filters[sym_name] = SymbolFilterRule(
+                    symbol=sym_name,
+                    price_tick_size=price_tick,
+                    qty_step_size=qty_step,
+                    min_qty=min_q,
+                    max_qty=max_q,
+                    min_notional=min_notional,
+                    price_precision=price_prec,
+                    qty_precision=qty_prec,
+                )
+
+        self._symbol_filters = new_filters
+        self._filters_last_synced_time = time.monotonic()
+        logger.info("Synchronized Binance exchange filters for %d symbols", len(new_filters))
+        return dict(self._symbol_filters)
+
+    def quantize_quantity(self, symbol: str, quantity: float) -> str:
+        """Floor quantity to symbol's qty_step_size and check min/max constraints."""
+        upper_sym = symbol.upper()
+        if upper_sym not in self._symbol_filters:
+            raise KeyError(f"Exchange filter not loaded for symbol: {upper_sym}")
+
+        rule = self._symbol_filters[upper_sym]
+        step = rule.qty_step_size
+        floored_qty = math.floor(quantity / step) * step
+        floored_qty = round(floored_qty, rule.qty_precision)
+
+        if floored_qty < rule.min_qty:
+            raise ExchangeFilterViolationError(
+                f"Quantized quantity {floored_qty} is below minQty {rule.min_qty} for {upper_sym}"
+            )
+        if floored_qty > rule.max_qty:
+            raise ExchangeFilterViolationError(
+                f"Quantized quantity {floored_qty} exceeds maxQty {rule.max_qty} for {upper_sym}"
+            )
+
+        return f"{floored_qty:.{rule.qty_precision}f}"
+
+    def quantize_price(self, symbol: str, price: float) -> str:
+        """Round price to symbol's price_tick_size."""
+        upper_sym = symbol.upper()
+        if upper_sym not in self._symbol_filters:
+            raise KeyError(f"Exchange filter not loaded for symbol: {upper_sym}")
+
+        rule = self._symbol_filters[upper_sym]
+        tick = rule.price_tick_size
+        rounded_price = round(price / tick) * tick
+        rounded_price = round(rounded_price, rule.price_precision)
+        return f"{rounded_price:.{rule.price_precision}f}"
 
     @property
     def base_url(self) -> str:
@@ -135,6 +260,10 @@ class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
 
     async def place_bracket_order(self, ticket: BracketOrderTicket) -> str:
         """Submit bracket order triplet (entry, SL, TP) and return parent exchange order ID."""
+        sym_upper = ticket.symbol.upper()
+        if sym_upper not in self._symbol_filters:
+            await self.sync_exchange_filters()
+
         if ticket.side == TradeSide.LONG:
             entry_side = "BUY"
             exit_side = "SELL"
@@ -144,10 +273,24 @@ class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
         else:
             raise ValueError(f"Unsupported trade side for bracket order: {ticket.side}")
 
+        # Quantize quantity and prices according to exchange filter rules
+        qty_str = self.quantize_quantity(sym_upper, ticket.quantity)
+        quantized_qty = float(qty_str)
+        entry_price_str = self.quantize_price(sym_upper, ticket.entry_price)
+        sl_price_str = self.quantize_price(sym_upper, ticket.stop_loss_price)
+        tp_price_str = self.quantize_price(sym_upper, ticket.take_profit_price)
+
+        rule = self._symbol_filters[sym_upper]
+        notional = quantized_qty * float(entry_price_str)
+        if notional < rule.min_notional:
+            raise ExchangeFilterViolationError(
+                f"Bracket order notional ${notional:.2f} is below minNotional ${rule.min_notional:.2f} for {sym_upper}"
+            )
+
         entry_params: dict[str, Any] = {
-            "symbol": ticket.symbol.upper(),
+            "symbol": sym_upper,
             "side": entry_side,
-            "quantity": str(ticket.quantity),
+            "quantity": qty_str,
             "newClientOrderId": ticket.order_id,
         }
 
@@ -155,7 +298,7 @@ class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
             entry_params["type"] = "MARKET"
         elif ticket.entry_type == EntryOrderType.LIMIT_PULLBACK_15M:
             entry_params["type"] = "LIMIT"
-            entry_params["price"] = str(ticket.entry_price)
+            entry_params["price"] = entry_price_str
             entry_params["timeInForce"] = "GTC"
         else:
             raise ValueError(f"Unsupported entry order type: {ticket.entry_type}")
@@ -167,31 +310,113 @@ class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
         else:
             parent_order_id = ticket.order_id
 
-        # 2. Place stop-loss market order
+        # 2. Place stop-loss market order via Algo Order endpoint
         sl_params: dict[str, Any] = {
-            "symbol": ticket.symbol.upper(),
+            "symbol": sym_upper,
             "side": exit_side,
+            "algoType": "CONDITIONAL",
             "type": "STOP_MARKET",
-            "stopPrice": str(ticket.stop_loss_price),
-            "quantity": str(ticket.quantity),
+            "triggerPrice": sl_price_str,
+            "quantity": qty_str,
+            "workingType": "MARK_PRICE",
             "reduceOnly": "true",
-            "newClientOrderId": f"{ticket.order_id}_sl",
+            "clientAlgoId": f"{ticket.order_id}_sl",
         }
-        await self._request("POST", "/fapi/v1/order", sl_params, True)
+        await self._request("POST", "/fapi/v1/algoOrder", sl_params, True)
 
-        # 3. Place take-profit market order
+        # 3. Place take-profit market order via Algo Order endpoint
         tp_params: dict[str, Any] = {
-            "symbol": ticket.symbol.upper(),
+            "symbol": sym_upper,
             "side": exit_side,
+            "algoType": "CONDITIONAL",
             "type": "TAKE_PROFIT_MARKET",
-            "stopPrice": str(ticket.take_profit_price),
-            "quantity": str(ticket.quantity),
+            "triggerPrice": tp_price_str,
+            "quantity": qty_str,
+            "workingType": "MARK_PRICE",
             "reduceOnly": "true",
-            "newClientOrderId": f"{ticket.order_id}_tp",
+            "clientAlgoId": f"{ticket.order_id}_tp",
         }
-        await self._request("POST", "/fapi/v1/order", tp_params, True)
+        await self._request("POST", "/fapi/v1/algoOrder", tp_params, True)
 
         return parent_order_id
+
+    async def fetch_open_algo_orders(self, symbol: str) -> list[dict[str, Any]]:
+        """Fetch all currently open algo conditional orders for a symbol."""
+        params: dict[str, Any] = {"symbol": symbol.upper()}
+        res: Any = await self._request("GET", "/fapi/v1/openAlgoOrders", params, True)
+        if isinstance(res, list):
+            return cast(list[dict[str, Any]], res)
+        return []
+
+    async def create_user_data_stream(self) -> str:
+        """Start a user data stream and return the listenKey."""
+        res = await self._request("POST", "/fapi/v1/listenKey", {}, False)
+        if "listenKey" in res:
+            return str(res["listenKey"])
+        raise RuntimeError(f"Failed to create user data stream: {res}")
+
+    async def keepalive_user_data_stream(self, listen_key: str) -> None:
+        """Keepalive a user data stream listenKey."""
+        await self._request("PUT", "/fapi/v1/listenKey", {"listenKey": listen_key}, False)
+
+    async def close_user_data_stream(self, listen_key: str) -> None:
+        """Close an active user data stream listenKey."""
+        await self._request("DELETE", "/fapi/v1/listenKey", {"listenKey": listen_key}, False)
+
+    async def fetch_recent_klines_1m(self, symbol: str, limit: int) -> list[EnrichedMicroBarRecord]:
+        """Fetch recent 1m klines from Binance REST API and map to EnrichedMicroBarRecord."""
+        params: dict[str, Any] = {
+            "symbol": symbol.upper(),
+            "interval": "1m",
+            "limit": limit,
+        }
+        raw_klines = await self._request("GET", "/fapi/v1/klines", params, False)
+        bars: list[EnrichedMicroBarRecord] = []
+        for k in raw_klines:
+            open_time_ms = int(k[0])
+            open_p = float(k[1])
+            high_p = float(k[2])
+            low_p = float(k[3])
+            close_p = float(k[4])
+            vol = float(k[5])
+            quote_vol = float(k[7])
+            trades = int(k[8])
+            taker_buy_vol = float(k[9])
+            taker_buy_quote_vol = float(k[10])
+            bars.append(
+                EnrichedMicroBarRecord(
+                    symbol=symbol.upper(),
+                    open_time_ms=open_time_ms,
+                    open=open_p,
+                    high=high_p,
+                    low=low_p,
+                    close=close_p,
+                    volume=vol,
+                    quote_volume=quote_vol,
+                    taker_buy_vol=taker_buy_vol,
+                    taker_buy_quote_vol=taker_buy_quote_vol,
+                    trade_count=trades,
+                    ofi_sum=0.0,
+                    obi_mean=0.0,
+                    obi_std=0.0,
+                    spread_bps_mean=1.0,
+                    liq_long_usd=0.0,
+                    liq_short_usd=0.0,
+                )
+            )
+        return bars
+
+    async def cancel_algo_order(self, symbol: str, algo_id: str) -> bool:
+        """Cancel an active algo conditional order (SL/TP) by algo ID or clientAlgoId."""
+        algo_params: dict[str, Any] = {"symbol": symbol.upper()}
+        if algo_id.isdigit():
+            algo_params["algoId"] = int(algo_id)
+        else:
+            algo_params["clientAlgoId"] = algo_id
+        resp = await self._request("DELETE", "/fapi/v1/algoOrder", algo_params, True)
+        if "code" in resp and str(resp["code"]) == "200":
+            return True
+        return "algoId" in resp
 
     async def cancel_order(self, symbol: str, order_id: str) -> bool:
         """Cancel an active order by symbol and order ID (exchange numeric or client ID)."""
@@ -201,10 +426,17 @@ class BinanceFuturesGatewayAdapter(ExecutionGatewayPort):
         else:
             params["origClientOrderId"] = order_id
 
-        resp = await self._request("DELETE", "/fapi/v1/order", params, True)
-        if "status" in resp and resp["status"] == "CANCELED":
-            return True
-        return "orderId" in resp
+        try:
+            resp = await self._request("DELETE", "/fapi/v1/order", params, True)
+            if "status" in resp and resp["status"] == "CANCELED":
+                return True
+            return "orderId" in resp
+        except RuntimeError as e:
+            # If standard order endpoint fails (e.g. -2011 Unknown order), fallback to algoOrder endpoint
+            try:
+                return await self.cancel_algo_order(symbol, order_id)
+            except Exception:
+                raise e from None
 
     async def get_position_notional(self, symbol: str) -> float:
         """Fetch current open position notional value in USD for a symbol."""

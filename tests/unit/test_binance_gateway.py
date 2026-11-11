@@ -21,6 +21,7 @@ from trading_bot.domain.entities.common.enums import (
     TradeSide,
 )
 from trading_bot.domain.entities.execution.trade_blueprint import BracketOrderTicket
+from trading_bot.domain.entities.market.symbol_filters import SymbolFilterRule
 from trading_bot.infrastructure.config_schemas import BinanceConfig
 from trading_bot.ports.execution_gateway_port import ExecutionGatewayPort
 
@@ -176,6 +177,18 @@ async def test_place_bracket_order_market_long() -> None:
 
     mock_session = MockClientSession(handle_request)
     adapter = BinanceFuturesGatewayAdapter(cfg, mock_session)  # pyright: ignore[reportArgumentType]
+    adapter.set_symbol_filter(
+        SymbolFilterRule(
+            symbol="BTCUSDT",
+            price_tick_size=0.1,
+            qty_step_size=0.01,
+            min_qty=0.01,
+            max_qty=1000.0,
+            min_notional=5.0,
+            price_precision=1,
+            qty_precision=2,
+        )
+    )
 
     ticket = make_bracket_ticket(
         symbol="BTCUSDT",
@@ -205,21 +218,25 @@ async def test_place_bracket_order_market_long() -> None:
     sl_req = order_requests[1]
     assert sl_req["symbol"] == "BTCUSDT"
     assert sl_req["side"] == "SELL"
+    assert sl_req["algoType"] == "CONDITIONAL"
     assert sl_req["type"] == "STOP_MARKET"
-    assert sl_req["stopPrice"] == "49000.0"
+    assert sl_req["triggerPrice"] == "49000.0"
     assert sl_req["quantity"] == "0.25"
     assert sl_req["reduceOnly"] == "true"
-    assert sl_req["newClientOrderId"] == "ticket-uuid-001_sl"
+    assert sl_req["workingType"] == "MARK_PRICE"
+    assert sl_req["clientAlgoId"] == "ticket-uuid-001_sl"
 
     # Check 3. Take Profit order
     tp_req = order_requests[2]
     assert tp_req["symbol"] == "BTCUSDT"
     assert tp_req["side"] == "SELL"
+    assert tp_req["algoType"] == "CONDITIONAL"
     assert tp_req["type"] == "TAKE_PROFIT_MARKET"
-    assert tp_req["stopPrice"] == "52000.0"
+    assert tp_req["triggerPrice"] == "52000.0"
     assert tp_req["quantity"] == "0.25"
     assert tp_req["reduceOnly"] == "true"
-    assert tp_req["newClientOrderId"] == "ticket-uuid-001_tp"
+    assert tp_req["workingType"] == "MARK_PRICE"
+    assert tp_req["clientAlgoId"] == "ticket-uuid-001_tp"
 
 
 @pytest.mark.asyncio
@@ -241,6 +258,18 @@ async def test_place_bracket_order_limit_short() -> None:
 
     mock_session = MockClientSession(handle_request)
     adapter = BinanceFuturesGatewayAdapter(cfg, mock_session)  # pyright: ignore[reportArgumentType]
+    adapter.set_symbol_filter(
+        SymbolFilterRule(
+            symbol="ETHUSDT",
+            price_tick_size=0.1,
+            qty_step_size=0.1,
+            min_qty=0.01,
+            max_qty=1000.0,
+            min_notional=5.0,
+            price_precision=1,
+            qty_precision=1,
+        )
+    )
 
     ticket = make_bracket_ticket(
         symbol="ETHUSDT",
@@ -266,13 +295,17 @@ async def test_place_bracket_order_limit_short() -> None:
 
     # Check SL
     assert order_requests[1]["side"] == "BUY"
+    assert order_requests[1]["algoType"] == "CONDITIONAL"
     assert order_requests[1]["type"] == "STOP_MARKET"
-    assert order_requests[1]["stopPrice"] == "3100.0"
+    assert order_requests[1]["triggerPrice"] == "3100.0"
+    assert order_requests[1]["clientAlgoId"] == "ticket-uuid-001_sl"
 
     # Check TP
     assert order_requests[2]["side"] == "BUY"
+    assert order_requests[2]["algoType"] == "CONDITIONAL"
     assert order_requests[2]["type"] == "TAKE_PROFIT_MARKET"
-    assert order_requests[2]["stopPrice"] == "2800.0"
+    assert order_requests[2]["triggerPrice"] == "2800.0"
+    assert order_requests[2]["clientAlgoId"] == "ticket-uuid-001_tp"
 
 
 @pytest.mark.asyncio
@@ -305,6 +338,46 @@ async def test_cancel_order_numeric_and_client_id() -> None:
     assert res_client is True
     assert captured_params[1]["origClientOrderId"] == "custom_client_id_abc"
     assert "orderId" not in captured_params[1]
+
+
+@pytest.mark.asyncio
+async def test_cancel_algo_order_and_fallback() -> None:
+    """Validate cancel_algo_order and fallback from cancel_order when order is algo order."""
+    cfg = make_binance_config(True)
+    captured_requests: list[tuple[str, str, dict[str, Any]]] = []
+
+    def handle_request(
+        method: str,
+        url: str,
+        params: dict[str, Any] | None,
+        headers: dict[str, str] | None,
+    ) -> MockResponse:
+        assert params is not None
+        captured_requests.append((method, url, dict(params)))
+        if "/fapi/v1/order" in url:
+            return MockResponse(
+                400, {"code": -2011, "msg": "Unknown order sent."}, "Unknown order sent."
+            )
+        return MockResponse(
+            200, {"algoId": 10001, "clientAlgoId": "test_sl", "code": "200", "msg": "success"}, "OK"
+        )
+
+    mock_session = MockClientSession(handle_request)
+    adapter = BinanceFuturesGatewayAdapter(cfg, mock_session)  # pyright: ignore[reportArgumentType]
+
+    res_direct = await adapter.cancel_algo_order("BTCUSDT", "10001")
+    assert res_direct is True
+    assert captured_requests[0][1].endswith("/fapi/v1/algoOrder")
+    assert captured_requests[0][2]["algoId"] == 10001
+
+    res_direct_str = await adapter.cancel_algo_order("BTCUSDT", "test_sl")
+    assert res_direct_str is True
+    assert captured_requests[1][2]["clientAlgoId"] == "test_sl"
+
+    res_fallback = await adapter.cancel_order("BTCUSDT", "test_sl")
+    assert res_fallback is True
+    assert captured_requests[2][1].endswith("/fapi/v1/order")
+    assert captured_requests[3][1].endswith("/fapi/v1/algoOrder")
 
 
 @pytest.mark.asyncio

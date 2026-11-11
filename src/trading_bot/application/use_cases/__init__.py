@@ -13,13 +13,23 @@ from trading_bot.application.use_cases.run_30m_trading_cycle import (
     SymbolCycleResult,
     TradingCycleSummary,
 )
+from trading_bot.application.use_cases.run_weekend_alpha_evolution import (
+    CandidateSeriesData,
+    RunWeekendAlphaEvolutionUseCase,
+    WeekendAlphaEvolutionRequest,
+    WeekendAlphaEvolutionResult,
+)
 
 __all__ = [
+    "CandidateSeriesData",
     "FunnelStage",
     "Run30mTradingCycleUseCase",
+    "RunWeekendAlphaEvolutionUseCase",
     "SymbolCycleResult",
     "TieredFunnelEvaluator",
     "TieredFunnelInput",
     "TieredFunnelVerdict",
     "TradingCycleSummary",
+    "WeekendAlphaEvolutionRequest",
+    "WeekendAlphaEvolutionResult",
 ]

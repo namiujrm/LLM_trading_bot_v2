@@ -511,6 +511,61 @@ async def test_scenario_1_normal_deliberation_and_order_placement(tmp_path: Path
         json_body: dict[str, Any] | None,
         headers: dict[str, str] | None,
     ) -> MockHttpResponse:
+        if method == "GET" and "/fapi/v1/exchangeInfo" in url:
+            return MockHttpResponse(
+                200,
+                {
+                    "symbols": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "pricePrecision": 1,
+                            "quantityPrecision": 3,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.1"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.001",
+                                    "minQty": "0.001",
+                                    "maxQty": "1000.0",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5.0"},
+                            ],
+                        },
+                        {
+                            "symbol": "ETHUSDT",
+                            "pricePrecision": 2,
+                            "quantityPrecision": 3,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.001",
+                                    "minQty": "0.001",
+                                    "maxQty": "1000.0",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5.0"},
+                            ],
+                        },
+                        {
+                            "symbol": "SOLUSDT",
+                            "pricePrecision": 2,
+                            "quantityPrecision": 2,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.01",
+                                    "minQty": "0.01",
+                                    "maxQty": "10000.0",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5.0"},
+                            ],
+                        },
+                    ]
+                },
+                "OK",
+            )
+
         if method == "GET" and "/fapi/v2/account" in url:
             # Healthy account with zero open heat
             account_data: dict[str, Any] = {
@@ -525,11 +580,13 @@ async def test_scenario_1_normal_deliberation_and_order_placement(tmp_path: Path
             }
             return MockHttpResponse(200, account_data, "OK")
 
-        if method == "POST" and "/fapi/v1/order" in url:
+        if method == "POST" and ("/fapi/v1/order" in url or "/fapi/v1/algoOrder" in url):
             assert params is not None
             binance_order_posts.append(dict(params))
             order_id_num = 900000 + len(binance_order_posts)
-            return MockHttpResponse(200, {"orderId": order_id_num, "status": "NEW"}, "OK")
+            return MockHttpResponse(
+                200, {"orderId": order_id_num, "algoId": order_id_num, "status": "NEW"}, "OK"
+            )
 
         raise ValueError(f"Unhandled Binance request: {method} {url}")
 
@@ -720,6 +777,61 @@ async def test_scenario_2_deterministic_fallback_and_critical_logging(tmp_path: 
         json_body: dict[str, Any] | None,
         headers: dict[str, str] | None,
     ) -> MockHttpResponse:
+        if method == "GET" and "/fapi/v1/exchangeInfo" in url:
+            return MockHttpResponse(
+                200,
+                {
+                    "symbols": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "pricePrecision": 1,
+                            "quantityPrecision": 3,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.1"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.001",
+                                    "minQty": "0.001",
+                                    "maxQty": "1000.0",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5.0"},
+                            ],
+                        },
+                        {
+                            "symbol": "ETHUSDT",
+                            "pricePrecision": 2,
+                            "quantityPrecision": 3,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.001",
+                                    "minQty": "0.001",
+                                    "maxQty": "1000.0",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5.0"},
+                            ],
+                        },
+                        {
+                            "symbol": "SOLUSDT",
+                            "pricePrecision": 2,
+                            "quantityPrecision": 2,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.01",
+                                    "minQty": "0.01",
+                                    "maxQty": "10000.0",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5.0"},
+                            ],
+                        },
+                    ]
+                },
+                "OK",
+            )
+
         if method == "GET" and "/fapi/v2/account" in url:
             account_data: dict[str, Any] = {
                 "updateTime": 1710000000000,
@@ -732,10 +844,12 @@ async def test_scenario_2_deterministic_fallback_and_critical_logging(tmp_path: 
                 "open_orders": [],
             }
             return MockHttpResponse(200, account_data, "OK")
-        if method == "POST" and "/fapi/v1/order" in url:
+        if method == "POST" and ("/fapi/v1/order" in url or "/fapi/v1/algoOrder" in url):
             assert params is not None
             binance_posts.append(dict(params))
-            return MockHttpResponse(200, {"orderId": 881122, "status": "NEW"}, "OK")
+            return MockHttpResponse(
+                200, {"orderId": 881122, "algoId": 881122, "status": "NEW"}, "OK"
+            )
         raise ValueError(f"Unhandled: {url}")
 
     mock_binance_session = MockAiohttpSession(binance_handler)
@@ -1063,6 +1177,61 @@ async def test_scenario_4_shadow_veto_on_excess_heat() -> None:
         json_body: dict[str, Any] | None,
         headers: dict[str, str] | None,
     ) -> MockHttpResponse:
+        if method == "GET" and "/fapi/v1/exchangeInfo" in url:
+            return MockHttpResponse(
+                200,
+                {
+                    "symbols": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "pricePrecision": 1,
+                            "quantityPrecision": 3,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.1"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.001",
+                                    "minQty": "0.001",
+                                    "maxQty": "1000.0",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5.0"},
+                            ],
+                        },
+                        {
+                            "symbol": "ETHUSDT",
+                            "pricePrecision": 2,
+                            "quantityPrecision": 3,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.001",
+                                    "minQty": "0.001",
+                                    "maxQty": "1000.0",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5.0"},
+                            ],
+                        },
+                        {
+                            "symbol": "SOLUSDT",
+                            "pricePrecision": 2,
+                            "quantityPrecision": 2,
+                            "filters": [
+                                {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                                {
+                                    "filterType": "LOT_SIZE",
+                                    "stepSize": "0.01",
+                                    "minQty": "0.01",
+                                    "maxQty": "10000.0",
+                                },
+                                {"filterType": "MIN_NOTIONAL", "notional": "5.0"},
+                            ],
+                        },
+                    ]
+                },
+                "OK",
+            )
+
         if method == "GET" and "/fapi/v2/account" in url:
             # 10,000 USD equity with active position risking 600 USD (6.0% heat)
             account_data: dict[str, Any] = {

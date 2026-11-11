@@ -177,6 +177,43 @@ class ConstrainedLGBMModel(CausalBarrierModelPort):
         """Return the tuple of canonical feature names."""
         return self._feature_names
 
+    @property
+    def config(self) -> ConstrainedLGBMConfig:
+        """Return the injected ConstrainedLGBMConfig."""
+        return self._config
+
+    @property
+    def random_state(self) -> int:
+        """Return the random seed."""
+        return self._random_state
+
+    @classmethod
+    def from_trained_artifacts(
+        cls,
+        config: ConstrainedLGBMConfig,
+        ridge_config: RidgePriorConfig,
+        coherence_config: CoherenceGateConfig,
+        feature_names: tuple[str, ...],
+        random_state: int,
+        booster_long: lgb.Booster,
+        booster_short: lgb.Booster,
+        ridge_long: OOFRidgePrior,
+        ridge_short: OOFRidgePrior,
+    ) -> ConstrainedLGBMModel:
+        """Factory method to construct model from previously persisted boosters and ridge priors."""
+        instance = cls(
+            config=config,
+            ridge_config=ridge_config,
+            coherence_config=coherence_config,
+            feature_names=feature_names,
+            random_state=random_state,
+        )
+        instance._booster_long = booster_long
+        instance._booster_short = booster_short
+        instance._ridge_long = ridge_long
+        instance._ridge_short = ridge_short
+        return instance
+
     def fit(
         self,
         train_features: Sequence[Sequence[float]],

@@ -21,10 +21,8 @@ import argparse
 import asyncio
 import contextlib
 import os
-import signal
-import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -40,6 +38,7 @@ from trading_bot.adapters.agents.ninerouter_client import NinerouterClient
 from trading_bot.adapters.agents.scout_agent import MarketScoutAdapter
 from trading_bot.adapters.binance.binance_futures_gateway import BinanceFuturesGatewayAdapter
 from trading_bot.adapters.binance.micro_accumulator import MicroIngestorConfig
+from trading_bot.adapters.binance.user_data_stream import BinanceUserDataStream
 from trading_bot.adapters.binance.ws_micro_ingestor import BinanceFuturesWSIngestor
 from trading_bot.adapters.persistence.database import DatabaseManager
 from trading_bot.adapters.persistence.pgvector_memory_repo import PgvectorMemoryRepository
@@ -52,21 +51,18 @@ from trading_bot.application.use_cases.evaluate_tiered_funnel import (
 )
 from trading_bot.application.use_cases.run_30m_trading_cycle import (
     Run30mTradingCycleUseCase,
+    SymbolCycleResult,
     TradingCycleSummary,
 )
 from trading_bot.domain.entities.common.enums import (
     PlaybookType,
 )
+from trading_bot.domain.entities.execution.shadow_order import ShadowOrderRecord
 from trading_bot.domain.entities.market.market_state import (
     EnrichedMicroBarRecord,
     SemanticQuantPacket,
 )
-from trading_bot.domain.entities.ml.ml_predictions import (
-    BarrierPredictionResult,
-    OODDetectionResult,
-    SHAPDriverContribution,
-    SHAPExplanationResult,
-)
+from trading_bot.domain.entities.ml.model_registry_entities import ModelArtifactMetadata
 from trading_bot.domain.entities.quant.quant_configs import (
     AlphaDSLConfig,
     FracDiffConfig,
@@ -115,6 +111,7 @@ from trading_bot.ports.rate_limit_governor_port import (
     RateLimitGovernorPort,
     RouteQuotaSpec,
 )
+from trading_bot.ports.telegram_port import TelegramNotifierPort
 
 
 class LivePaperRunnerConfig(BaseModel):
@@ -126,124 +123,6 @@ class LivePaperRunnerConfig(BaseModel):
     log_dir: str
     max_tracking_duration_ms: int
     check_interval_seconds: float
-
-
-class FallbackBarrierModel(CausalBarrierModelPort):
-    """Fallback causal barrier model using quantitative feature signals (Zero Defaults)."""
-
-    def fit(
-        self,
-        train_features: Sequence[Sequence[float]],
-        y_long: Sequence[int],
-        y_short: Sequence[int],
-        sample_weights: Sequence[float],
-        sample_intervals: Sequence[tuple[int, int]] | None,
-    ) -> None:
-        pass
-
-    def predict(self, sample_features: Sequence[float]) -> BarrierPredictionResult:
-        hurst_signal = sample_features[0] if len(sample_features) > 0 else 0.50
-        vpin_signal = sample_features[3] if len(sample_features) > 3 else 0.50
-
-        p_long = max(
-            0.20, min(0.85, 0.50 + (hurst_signal - 0.50) * 0.40 - (vpin_signal - 0.50) * 0.20)
-        )
-        p_short = max(0.20, min(0.85, 1.0 - p_long))
-
-        return BarrierPredictionResult(
-            p_long=p_long,
-            p_short=p_short,
-            p_raw_long=p_long,
-            p_raw_short=p_short,
-            is_coherent=True,
-            coherence_penalty=0.0,
-        )
-
-    def predict_batch(
-        self,
-        batch_features: Sequence[Sequence[float]],
-    ) -> Sequence[BarrierPredictionResult]:
-        return [self.predict(f) for f in batch_features]
-
-
-class FallbackOODDetector(OODDetectorPort):
-    """Fallback out-of-distribution detector using mahalanobis thresholding (Zero Defaults)."""
-
-    def fit(
-        self,
-        train_features: Sequence[Sequence[float]],
-        calibration_features: Sequence[Sequence[float]],
-    ) -> None:
-        pass
-
-    def predict(self, sample_features: Sequence[float]) -> OODDetectionResult:
-        return OODDetectionResult(
-            is_ood=False,
-            mahalanobis_distance=1.2,
-            empirical_quantile_threshold=3.5,
-            excess_distance=0.0,
-            gamma_ood=1.0,
-            feature_contributions=(0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
-        )
-
-    def predict_batch(
-        self,
-        batch_features: Sequence[Sequence[float]],
-    ) -> Sequence[OODDetectionResult]:
-        return [self.predict(f) for f in batch_features]
-
-
-class FallbackTreeSHAPExplainer(TreeSHAPExplainerPort):
-    """Fallback TreeSHAP explainer generating feature attributions (Zero Defaults)."""
-
-    def explain(
-        self,
-        feature_vector: Sequence[float],
-        feature_names: Sequence[str],
-        model: Any,
-        symbol: str,
-        bar_time: datetime,
-        model_type: str,
-    ) -> SHAPExplanationResult:
-        c_bull = SHAPDriverContribution(
-            feature_name="hurst_exponent_100",
-            feature_value=0.65,
-            shap_value=0.05,
-            expected_sign=1,
-            is_sign_consistent=True,
-        )
-        c_bear = SHAPDriverContribution(
-            feature_name="vpin_toxicity_pct",
-            feature_value=0.35,
-            shap_value=-0.05,
-            expected_sign=-1,
-            is_sign_consistent=True,
-        )
-        return SHAPExplanationResult(
-            symbol=symbol,
-            bar_time=bar_time,
-            model_type=model_type,
-            base_value=0.50,
-            raw_margin=0.50,
-            contributions=(c_bull, c_bear),
-            top_bullish_drivers=(c_bull,),
-            top_bearish_drivers=(c_bear,),
-            is_economic_consistent=True,
-        )
-
-    def explain_batch(
-        self,
-        batch_features: Sequence[Sequence[float]],
-        feature_names: Sequence[str],
-        model: Any,
-        symbol: str,
-        bar_times: Sequence[datetime],
-        model_type: str,
-    ) -> tuple[SHAPExplanationResult, ...]:
-        return tuple(
-            self.explain(f, feature_names, model, symbol, t, model_type)
-            for f, t in zip(batch_features, bar_times, strict=True)
-        )
 
 
 class InMemoryRateLimitGovernor(RateLimitGovernorPort):
@@ -258,18 +137,9 @@ class InMemoryRateLimitGovernor(RateLimitGovernorPort):
         tier: str,
         estimated_tokens: int,
     ) -> RouteQuotaSpec:
-        if tier in self._specs_by_tier and len(self._specs_by_tier[tier]) > 0:
-            return self._specs_by_tier[tier][0]
-        # Return fallback route spec if tier not explicitly registered
-        return RouteQuotaSpec(
-            route_id=f"fallback_{tier}",
-            model_name="fallback-model",
-            rpm_limit=1000,
-            tpm_limit=500000,
-            rpd_limit=10000,
-            min_interval_ms=50,
-            max_concurrency=10,
-        )
+        if tier not in self._specs_by_tier or len(self._specs_by_tier[tier]) == 0:
+            raise KeyError(f"Route tier '{tier}' not registered in RateLimitGovernor")
+        return self._specs_by_tier[tier][0]
 
     async def mark_route_cooldown(
         self,
@@ -293,9 +163,15 @@ class LivePaperRunner:
         shadow_tracker: ShadowOrderTracker,
         judge_adapter: PostMortemJudgePort,
         use_case: Run30mTradingCycleUseCase,
+        barrier_model: CausalBarrierModelPort,
+        ood_detector: OODDetectorPort,
+        shap_explainer: TreeSHAPExplainerPort,
+        model_metadata: ModelArtifactMetadata | None,
+        telegram_notifier: TelegramNotifierPort | None,
         trading_logger: StructuredBotLogger,
         agent_logger: StructuredBotLogger,
         system_logger: StructuredBotLogger,
+        user_data_stream: BinanceUserDataStream | None,
     ) -> None:
         self.config: LivePaperRunnerConfig = config
         self._db: DatabaseManager = db_manager
@@ -306,14 +182,30 @@ class LivePaperRunner:
         self._shadow_tracker: ShadowOrderTracker = shadow_tracker
         self._judge_adapter: PostMortemJudgePort = judge_adapter
         self._use_case: Run30mTradingCycleUseCase = use_case
+        self._barrier_model: CausalBarrierModelPort = barrier_model
+        self._ood_detector: OODDetectorPort = ood_detector
+        self._shap_explainer: TreeSHAPExplainerPort = shap_explainer
+        self._active_model_metadata: ModelArtifactMetadata | None = model_metadata
+        self._telegram_notifier: TelegramNotifierPort | None = telegram_notifier
         self._trading_logger: StructuredBotLogger = trading_logger
         self._agent_logger: StructuredBotLogger = agent_logger
         self._system_logger: StructuredBotLogger = system_logger
+        self._user_data_stream: BinanceUserDataStream | None = user_data_stream
 
         self._is_running: bool = False
         self._stop_event: asyncio.Event = asyncio.Event()
         self._cycle_history: list[TradingCycleSummary] = []
         self._start_time_monotonic: float = 0.0
+        self._on_concluded_callback: Callable[[ShadowOrderRecord, Any], Awaitable[None]] | None = (
+            None
+        )
+
+    def set_on_concluded_callback(
+        self,
+        callback: Callable[[ShadowOrderRecord, Any], Awaitable[None]],
+    ) -> None:
+        """Register asynchronous callback fired when an order/shadow order concludes."""
+        self._on_concluded_callback = callback
 
     @property
     def is_running(self) -> bool:
@@ -322,6 +214,122 @@ class LivePaperRunner:
     @property
     def cycle_history(self) -> list[TradingCycleSummary]:
         return list(self._cycle_history)
+
+    @property
+    def barrier_model(self) -> CausalBarrierModelPort:
+        return self._barrier_model
+
+    @property
+    def ood_detector(self) -> OODDetectorPort:
+        return self._ood_detector
+
+    @property
+    def shap_explainer(self) -> TreeSHAPExplainerPort:
+        return self._shap_explainer
+
+    @property
+    def active_model_metadata(self) -> ModelArtifactMetadata | None:
+        return self._active_model_metadata
+
+    @property
+    def telegram_notifier(self) -> TelegramNotifierPort | None:
+        return self._telegram_notifier
+
+    def set_telegram_notifier(self, notifier: TelegramNotifierPort) -> None:
+        """Register TelegramNotifierPort for operational alerts."""
+        self._telegram_notifier = notifier
+
+    @property
+    def user_data_stream(self) -> BinanceUserDataStream | None:
+        return self._user_data_stream
+
+    async def handle_bracket_leg_filled(
+        self, symbol: str, filled_leg: str, parent_id: str, opposing_algo_id: str
+    ) -> None:
+        """Cancel opposing bracket algo leg immediately upon fill of SL or TP."""
+        self._trading_logger.info(
+            f"Bracket leg {filled_leg} filled for {symbol}. Cancelling opposing leg {opposing_algo_id}...",
+            {
+                "symbol": symbol,
+                "filled_leg": filled_leg,
+                "opposing_algo_id": opposing_algo_id,
+                "parent_id": parent_id,
+            },
+        )
+        try:
+            cancelled = await self._gateway.cancel_algo_order(symbol, opposing_algo_id)
+            if cancelled:
+                self._trading_logger.info(
+                    f"Successfully cancelled opposing leg {opposing_algo_id} for {symbol}",
+                    {"symbol": symbol, "opposing_algo_id": opposing_algo_id},
+                )
+            else:
+                self._trading_logger.warning(
+                    f"Opposing leg {opposing_algo_id} was not active or already closed",
+                    {"symbol": symbol, "opposing_algo_id": opposing_algo_id},
+                )
+        except Exception as exc:
+            self._trading_logger.error(
+                f"Failed to cancel opposing bracket leg {opposing_algo_id}: {exc}",
+                {"symbol": symbol, "opposing_algo_id": opposing_algo_id, "error": str(exc)},
+            )
+
+    async def reconcile_orphan_bracket_orders(self) -> None:
+        """Periodically clean up orphaned bracket orders when position is flat."""
+        try:
+            positions = await self._gateway.fetch_active_positions()
+            active_symbols = {p.symbol.upper() for p in positions if abs(p.quantity) > 1e-8}
+            for sym in self.config.symbols:
+                upper_sym = sym.upper()
+                if upper_sym not in active_symbols:
+                    open_algos = await self._gateway.fetch_open_algo_orders(upper_sym)
+                    for algo in open_algos:
+                        algo_id_val = ""
+                        if "algoId" in algo and algo["algoId"] is not None:
+                            algo_id_val = str(algo["algoId"])
+                        elif "clientAlgoId" in algo and algo["clientAlgoId"] is not None:
+                            algo_id_val = str(algo["clientAlgoId"])
+
+                        if algo_id_val:
+                            self._system_logger.info(
+                                f"Reconciliation: Cancelling orphaned algo order {algo_id_val} for flat symbol {upper_sym}",
+                                {"symbol": upper_sym, "algo_id": algo_id_val},
+                            )
+                            await self._gateway.cancel_algo_order(upper_sym, algo_id_val)
+        except Exception as exc:
+            self._system_logger.warning(
+                f"Warning during bracket order reconciliation: {exc}",
+                {"error": str(exc)},
+            )
+
+    def reload_active_model(
+        self,
+        new_barrier_model: CausalBarrierModelPort,
+        new_ood_detector: OODDetectorPort,
+        new_shap_explainer: TreeSHAPExplainerPort,
+        new_metadata: ModelArtifactMetadata,
+    ) -> None:
+        """Atomically hot-reload barrier model, OOD detector, and SHAP explainer in-memory."""
+        self._barrier_model = new_barrier_model
+        self._ood_detector = new_ood_detector
+        self._shap_explainer = new_shap_explainer
+        self._active_model_metadata = new_metadata
+        self._bar_pipeline.reload_models(
+            barrier_model=new_barrier_model,
+            ood_detector=new_ood_detector,
+            treeshap_explainer=new_shap_explainer,
+        )
+        self._system_logger.log_system_event(
+            event_type="MODEL_HOT_RELOADED",
+            component="LivePaperRunner",
+            message=f"Active model successfully hot-reloaded to {new_metadata.model_id} ({new_metadata.role.value})",
+            details={
+                "model_id": new_metadata.model_id,
+                "role": new_metadata.role.value,
+                "trained_at_utc": new_metadata.trained_at_utc.isoformat(),
+                "file_checksum": new_metadata.file_checksum,
+            },
+        )
 
     async def handle_bar_closed(self, bar: EnrichedMicroBarRecord) -> None:
         """Process an enriched 1-minute closed candle across bar pipeline and shadow tracker."""
@@ -371,15 +379,24 @@ class LivePaperRunner:
                 },
             )
 
-    async def handle_cycle_ready(
+            if self._on_concluded_callback is not None:
+                with contextlib.suppress(Exception):
+                    await self._on_concluded_callback(concluded, case)
+
+    async def run_30m_cycle(
         self,
         cycle_time_utc: datetime,
         market_inputs: dict[str, TieredFunnelInput],
         quant_packets: dict[str, SemanticQuantPacket],
         current_prices: dict[str, float],
         atr_30m_values: dict[str, float],
-    ) -> None:
-        """Execute 30-minute cascade trading cycle across all target symbols."""
+    ) -> TradingCycleSummary:
+        """Execute 30-minute cascade trading cycle with Fail-Safe Capital Protection.
+
+        If model inference fails or an anomaly occurs, enforces Fail-Safe Capital Protection:
+        all symbols fail with reason STAGE_C_ML_ERROR, zero trades are executed, and an alert
+        is dispatched to Telegram. Heuristic fallbacks are strictly prohibited.
+        """
         self._system_logger.log_system_event(
             event_type="CYCLE_DISPATCH_TRIGGERED",
             component="LivePaperRunner",
@@ -390,26 +407,98 @@ class LivePaperRunner:
             },
         )
 
-        summary = await self._use_case.execute_cycle(
+        try:
+            summary = await self._use_case.execute_cycle(
+                cycle_time_utc=cycle_time_utc,
+                market_inputs=market_inputs,
+                current_prices=current_prices,
+                atr_30m_values=atr_30m_values,
+                quant_packets=quant_packets,
+            )
+            self._cycle_history.append(summary)
+
+            # Structured trade log
+            self._trading_logger.log_order_event(
+                event_type="CYCLE_SUMMARY_RECORDED",
+                order_id=f"cycle_{summary.cycle_timestamp_ms}",
+                symbol="ALL",
+                details={
+                    "executed_orders_count": summary.executed_orders_count,
+                    "shadow_orders_count": summary.shadow_orders_count,
+                    "btc_passed": summary.btc_result.funnel_passed,
+                    "btc_action": summary.btc_result.order_id,
+                },
+            )
+            return summary
+
+        except Exception as exc:
+            self._system_logger.error(
+                f"Fail-Safe Capital Protection activated due to ML/cycle error: {exc}",
+                {"error": str(exc), "cycle_time": cycle_time_utc.isoformat()},
+            )
+
+            cycle_ts_ms = int(cycle_time_utc.timestamp() * 1000)
+            btc_fail = SymbolCycleResult(
+                symbol="BTCUSDT",
+                funnel_passed=False,
+                funnel_stage="STAGE_C_PLAYBOOK",
+                thesis=None,
+                blueprint=None,
+                verdict=None,
+                order_id=None,
+                is_shadow=False,
+                rejection_reason="STAGE_C_ML_ERROR",
+            )
+            altcoin_fails: dict[str, SymbolCycleResult] = {
+                sym: SymbolCycleResult(
+                    symbol=sym,
+                    funnel_passed=False,
+                    funnel_stage="STAGE_C_PLAYBOOK",
+                    thesis=None,
+                    blueprint=None,
+                    verdict=None,
+                    order_id=None,
+                    is_shadow=False,
+                    rejection_reason="STAGE_C_ML_ERROR",
+                )
+                for sym in market_inputs
+                if sym != "BTCUSDT"
+            }
+
+            fail_summary = TradingCycleSummary(
+                cycle_timestamp_ms=cycle_ts_ms,
+                btc_result=btc_fail,
+                altcoin_results=altcoin_fails,
+                executed_orders_count=0,
+                shadow_orders_count=0,
+            )
+            self._cycle_history.append(fail_summary)
+
+            if self._telegram_notifier is not None:
+                with contextlib.suppress(Exception):
+                    await self._telegram_notifier.send_emergency_alert(
+                        "🚨 [FAIL-SAFE CAPITAL PROTECTION] ML Inference Error",
+                        f"An anomaly occurred during 30m cycle: {exc}\n"
+                        f"funnel_passed=False (STAGE_C_ML_ERROR). Zero trades taken.",
+                    )
+
+            return fail_summary
+
+    async def handle_cycle_ready(
+        self,
+        cycle_time_utc: datetime,
+        market_inputs: dict[str, TieredFunnelInput],
+        quant_packets: dict[str, SemanticQuantPacket],
+        current_prices: dict[str, float],
+        atr_30m_values: dict[str, float],
+    ) -> None:
+        """Callback invoked when all symbols have completed 30m candle close."""
+        await self.run_30m_cycle(
             cycle_time_utc=cycle_time_utc,
             market_inputs=market_inputs,
+            quant_packets=quant_packets,
             current_prices=current_prices,
             atr_30m_values=atr_30m_values,
-            quant_packets=quant_packets,
-        )
-        self._cycle_history.append(summary)
-
-        # Structured trade log
-        self._trading_logger.log_order_event(
-            event_type="CYCLE_SUMMARY_RECORDED",
-            order_id=f"cycle_{summary.cycle_timestamp_ms}",
-            symbol="ALL",
-            details={
-                "executed_orders_count": summary.executed_orders_count,
-                "shadow_orders_count": summary.shadow_orders_count,
-                "btc_passed": summary.btc_result.funnel_passed,
-                "btc_action": summary.btc_result.order_id,
-            },
         )
 
     async def start(self) -> None:
@@ -462,6 +551,39 @@ class LivePaperRunner:
                     {"error": str(exc)},
                 )
 
+        # 2.1 Sync Exchange Filters
+        if hasattr(gateway_any, "fetch_symbol_filters"):
+            try:
+                await gateway_any.fetch_symbol_filters()
+                self._system_logger.log_system_event(
+                    event_type="EXCHANGE_FILTERS_SYNCED",
+                    component="LivePaperRunner",
+                    message="Binance exchange lot size and tick size filters synced",
+                    details={},
+                )
+            except Exception as exc:
+                self._system_logger.warning(
+                    f"Exchange filter sync warning: {exc}",
+                    {"error": str(exc)},
+                )
+
+        # 2.2 Warm-up Rolling Buffers with Recent Historical Klines
+        for sym in self.config.symbols:
+            try:
+                bars = await self._gateway.fetch_recent_klines_1m(sym, 300)
+                await self._bar_pipeline.warmup_historical_bars(sym, bars)
+                self._system_logger.log_system_event(
+                    event_type="HISTORICAL_BUFFER_WARMED",
+                    component="LivePaperRunner",
+                    message=f"Pre-warmed {len(bars)} 1m historical bars for {sym}",
+                    details={"symbol": sym, "bar_count": len(bars)},
+                )
+            except Exception as exc:
+                self._system_logger.warning(
+                    f"Historical buffer warm-up warning for {sym}: {exc}",
+                    {"symbol": sym, "error": str(exc)},
+                )
+
         # 3. Start WebSocket Ingestor
         await self._ws_ingestor.start()
         self._system_logger.log_system_event(
@@ -471,9 +593,25 @@ class LivePaperRunner:
             details={"stream_count": len(self.config.symbols) * 4},
         )
 
-        # 4. Main Event Loop with duration monitoring
+        # 3.1 Start User Data Stream
+        if self._user_data_stream is not None:
+            await self._user_data_stream.start()
+            self._system_logger.log_system_event(
+                event_type="USER_DATA_STREAM_STARTED",
+                component="LivePaperRunner",
+                message="User Data Stream started for real-time bracket order management",
+                details={},
+            )
+
+        # 4. Main Event Loop with duration monitoring and periodic reconciliation
+        last_reconcile_monotonic: float = time.monotonic()
         try:
             while not self._stop_event.is_set():
+                now_monotonic = time.monotonic()
+                if (now_monotonic - last_reconcile_monotonic) >= 60.0:
+                    last_reconcile_monotonic = now_monotonic
+                    await self.reconcile_orphan_bracket_orders()
+
                 if self.config.duration_minutes is not None:
                     elapsed_minutes = (time.monotonic() - self._start_time_monotonic) / 60.0
                     if elapsed_minutes >= float(self.config.duration_minutes):
@@ -508,6 +646,16 @@ class LivePaperRunner:
             message="Stopping live paper runner daemon",
             details={},
         )
+
+        # Stop User Data Stream
+        if self._user_data_stream is not None:
+            try:
+                await self._user_data_stream.stop()
+            except Exception as exc:
+                self._system_logger.warning(
+                    f"Error stopping User Data Stream: {exc}",
+                    {"error": str(exc)},
+                )
 
         # Stop WebSocket Ingestor
         await self._ws_ingestor.stop()
@@ -572,6 +720,11 @@ def make_default_playbook_config(altcoin_symbols: list[str]) -> PlaybookConfig:
 async def bootstrap_live_paper_runner(
     runner_cfg: LivePaperRunnerConfig,
     session: aiohttp.ClientSession | None,
+    barrier_model: CausalBarrierModelPort,
+    ood_detector: OODDetectorPort,
+    shap_explainer: TreeSHAPExplainerPort,
+    model_metadata: ModelArtifactMetadata | None,
+    telegram_notifier: TelegramNotifierPort | None,
 ) -> LivePaperRunner:
     """Bootstrap a production LivePaperRunner instance wired to live environment or testnet."""
     load_dotenv()
@@ -703,11 +856,6 @@ async def bootstrap_live_paper_runner(
         shadow_order_tracker=shadow_tracker,
     )
 
-    # ML & Quant Engine components
-    barrier_model = FallbackBarrierModel()
-    ood_detector = FallbackOODDetector()
-    shap_explainer = FallbackTreeSHAPExplainer()
-
     # Pre-declare runner reference for callbacks
     runner_ref: list[LivePaperRunner | None] = [None]
 
@@ -796,6 +944,17 @@ async def bootstrap_live_paper_runner(
         on_bar_closed=on_bar_closed_callback,
     )
 
+    async def on_leg_filled(sym: str, leg: str, parent: str, opposing: str) -> None:
+        if runner_ref[0] is not None:
+            await runner_ref[0].handle_bracket_leg_filled(sym, leg, parent, opposing)
+
+    user_data_stream = BinanceUserDataStream(
+        binance_config=binance_cfg,
+        gateway=gateway,
+        session=session,
+        on_bracket_leg_filled=on_leg_filled,
+    )
+
     runner = LivePaperRunner(
         config=runner_cfg,
         db_manager=db_manager,
@@ -806,9 +965,15 @@ async def bootstrap_live_paper_runner(
         shadow_tracker=shadow_tracker,
         judge_adapter=judge_adapter,
         use_case=use_case,
+        barrier_model=barrier_model,
+        ood_detector=ood_detector,
+        shap_explainer=shap_explainer,
+        model_metadata=model_metadata,
+        telegram_notifier=telegram_notifier,
         trading_logger=trading_logger,
         agent_logger=agent_logger,
         system_logger=system_logger,
+        user_data_stream=user_data_stream,
     )
     runner_ref[0] = runner
     return runner
@@ -871,26 +1036,12 @@ def parse_cli_args() -> LivePaperRunnerConfig:
 
 async def async_main() -> None:
     """Async main routine."""
-    config = parse_cli_args()
-    runner = await bootstrap_live_paper_runner(config, None)
-
-    # Handle termination signals portably
-    loop = asyncio.get_running_loop()
-    shutdown_task: asyncio.Task[None] | None = None
-
-    def signal_handler() -> None:
-        nonlocal shutdown_task
-        print("\nShutdown signal received! Terminating runner gracefully...")
-        shutdown_task = asyncio.create_task(runner.stop())
-
-    if sys.platform != "win32":
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, signal_handler)
-
-    try:
-        await runner.start()
-    except (KeyboardInterrupt, SystemExit):
-        await runner.stop()
+    _config = parse_cli_args()
+    raise RuntimeError(
+        "Direct invocation of live_paper_runner CLI without persistent model registry is prohibited "
+        "under Invariant #9 (zero heuristic fallbacks). Launch via trading_bot.interfaces.main or supply "
+        "real models to bootstrap_live_paper_runner."
+    )
 
 
 def main() -> None:

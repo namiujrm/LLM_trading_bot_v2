@@ -49,6 +49,22 @@ class NinerouterConfig(BaseModel):
     judge_tier_model: str
 
 
+class TelegramConfig(BaseModel):
+    """Telegram alerting and command bot configuration (Zero Defaults)."""
+
+    bot_token: str
+    chat_id: str
+
+
+class LoggingConfig(BaseModel):
+    """Structured logging configuration (Zero Defaults)."""
+
+    log_dir: str
+    retention_days: int
+    min_level: str
+    console_output: bool
+
+
 class ConfigLoader:
     """Factory loading configurations from environment mappings with zero defaults and fail-fast discipline."""
 
@@ -69,18 +85,35 @@ class ConfigLoader:
         """Construct NinerouterConfig directly from os.environ."""
         return ConfigLoader.load_ninerouter_config(os.environ)
 
+    @staticmethod
+    def load_telegram_config(env_mapping: Mapping[str, str]) -> TelegramConfig:
+        """Construct TelegramConfig from an explicit environment mapping (fail-fast KeyError on missing keys)."""
+        return TelegramConfig(
+            bot_token=env_mapping["TELEGRAM_BOT_TOKEN"],
+            chat_id=env_mapping["TELEGRAM_CHAT_ID"],
+        )
 
-class TelegramConfig(BaseModel):
-    """Telegram alerting and command bot configuration (Zero Defaults)."""
+    @staticmethod
+    def load_telegram_config_from_env() -> TelegramConfig:
+        """Construct TelegramConfig directly from os.environ."""
+        return ConfigLoader.load_telegram_config(os.environ)
 
-    bot_token: str
-    chat_id: str
+    @staticmethod
+    def load_binance_config(env_mapping: Mapping[str, str]) -> BinanceConfig:
+        """Construct BinanceConfig from an explicit environment mapping (fail-fast KeyError on missing keys)."""
+        api_key: str = env_mapping["BINANCE_API_KEY"]
+        api_secret: str = env_mapping["BINANCE_API_SECRET"]
+        raw_testnet: str = env_mapping["BINANCE_TESTNET"].strip().lower()
+        testnet_val: bool = raw_testnet in ("true", "1", "yes")
+        recv_window_ms: int = int(env_mapping["BINANCE_RECV_WINDOW_MS"])
+        return BinanceConfig(
+            api_key=api_key,
+            api_secret=api_secret,
+            testnet=testnet_val,
+            recv_window_ms=recv_window_ms,
+        )
 
-
-class LoggingConfig(BaseModel):
-    """Structured logging configuration (Zero Defaults)."""
-
-    log_dir: str
-    retention_days: int
-    min_level: str
-    console_output: bool
+    @staticmethod
+    def load_binance_config_from_env() -> BinanceConfig:
+        """Construct BinanceConfig directly from os.environ."""
+        return ConfigLoader.load_binance_config(os.environ)

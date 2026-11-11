@@ -31,6 +31,9 @@ COPY scripts/ ./scripts/
 COPY sql/ ./sql/
 COPY AGENTS.md README.md ./
 
+# Create runtime directories for data, logs and reports
+RUN mkdir -p /app/data /app/logs /app/reports
+
 # Final synchronization to install project package itself
 RUN uv sync --frozen --dev
 

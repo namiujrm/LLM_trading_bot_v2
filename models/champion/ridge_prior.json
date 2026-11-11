@@ -1,0 +1,76 @@
+{
+  "ridge_long_coefficients": [
+    2.504571939093165,
+    -2.018977125574223,
+    0.1618095995051083,
+    -0.049895245928860715,
+    3.1581083636010794,
+    -0.05066714940351936,
+    0.24960173531904625,
+    0.05662452623697319,
+    -0.06340254159737387,
+    -0.08043953970187187,
+    -0.050097494421877095
+  ],
+  "ridge_long_intercept": 0.026895976277780106,
+  "ridge_short_coefficients": [
+    0.31476255228965266,
+    -0.000721545997425222,
+    -2.4714426785182924,
+    -0.08353333212606384,
+    -2.9915116347978117,
+    -0.16318302466836174,
+    0.22703263243412103,
+    0.1233573927903397,
+    0.006930304134351891,
+    -0.017138582790307354,
+    0.020593165997609745
+  ],
+  "ridge_short_intercept": 0.24649214657020024,
+  "ridge_config": {
+    "ridge_c": 1.0,
+    "ridge_max_iter": 200,
+    "oof_splits": 5,
+    "clip_eps": 1e-05,
+    "embargo_bars_30m": 5,
+    "max_label_holding_bars_30m": 3
+  },
+  "lgbm_config": {
+    "max_depth": 3,
+    "num_leaves": 8,
+    "min_child_samples": 10,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0,
+    "num_boost_round": 15,
+    "early_stopping_rounds": 5,
+    "coherence_penalty_gamma": 1.0
+  },
+  "coherence_config": {
+    "gamma_conflict": 1.0,
+    "max_combined_probability": 1.0,
+    "min_probability_floor": 0.0
+  },
+  "feature_names": [
+    "hurst_exponent_100",
+    "shannon_entropy_50",
+    "fracdiff_momentum_z",
+    "vpin_toxicity_pct",
+    "taker_cvd_z_24",
+    "ofi_imbalance_z",
+    "kyle_lambda_log",
+    "oi_directional_score",
+    "funding_crowded_pos_z",
+    "funding_crowded_neg_z",
+    "btc_lead_catchup_gap"
+  ],
+  "random_state": 42,
+  "tree_shap_config": {
+    "top_k_bullish": 5,
+    "top_k_bearish": 3,
+    "local_efficiency_tol": 0.0001,
+    "sign_tolerance": 0.0001
+  }
+}

@@ -9,6 +9,13 @@ from trading_bot.adapters.agents.macro_news_sentinel import (
     MacroEventSchedule,
     MacroNewsSentinel,
 )
+from trading_bot.adapters.agents.math_alpha_agent import (
+    CLUSTER_0_REGIME,
+    CLUSTER_1_MICRO,
+    CLUSTER_2_DERIV,
+    CLUSTER_3_CROSS,
+    MathAlphaAgentAdapter,
+)
 from trading_bot.adapters.agents.ninerouter_client import (
     NinerouterClient,
     NinerouterResponse,
@@ -28,10 +35,15 @@ from trading_bot.adapters.agents.scout_agent import MarketScoutAdapter
 
 __all__ = [
     "ACQUIRE_ROUTE_LUA",
+    "CLUSTER_0_REGIME",
+    "CLUSTER_1_MICRO",
+    "CLUSTER_2_DERIV",
+    "CLUSTER_3_CROSS",
     "GovernorPacerConfig",
     "MacroEventSchedule",
     "MacroNewsSentinel",
     "MarketScoutAdapter",
+    "MathAlphaAgentAdapter",
     "NinerouterClient",
     "NinerouterResponse",
     "PerProviderRateLimitGovernor",

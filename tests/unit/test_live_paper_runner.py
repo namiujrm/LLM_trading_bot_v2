@@ -1,4 +1,13 @@
-"""Unit tests for LivePaperRunner daemon and multi-stream orchestrator."""
+"""Unit tests for LivePaperRunner daemon and multi-stream orchestrator (Milestone 1).
+
+Enforces strictly ZERO default parameters, ZERO class field defaults, and ZERO silent fallbacks.
+Tests:
+- Fallback models completely eliminated from runtime interface.
+- Injection of real ML model ports into LivePaperRunner.__init__.
+- Zero-downtime hot-reloading via reload_active_model().
+- Fail-Safe Capital Protection in run_30m_cycle(): STAGE_C_ML_ERROR on inference failure,
+  zero trades executed, and emergency alert dispatched to Telegram.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +34,10 @@ from trading_bot.domain.entities.market.market_state import (
     EnrichedMicroBarRecord,
 )
 from trading_bot.domain.entities.memory.episodic_case import EpisodicCase
+from trading_bot.domain.entities.ml.model_registry_entities import (
+    ModelArtifactMetadata,
+    ModelRole,
+)
 from trading_bot.infrastructure.config_schemas import LoggingConfig
 from trading_bot.infrastructure.logging.bot_logger import (
     LogCategory,
@@ -34,6 +47,12 @@ from trading_bot.interfaces.live_paper_runner import (
     LivePaperRunner,
     LivePaperRunnerConfig,
 )
+from trading_bot.ports.ml_model_port import (
+    CausalBarrierModelPort,
+    OODDetectorPort,
+    TreeSHAPExplainerPort,
+)
+from trading_bot.ports.telegram_port import TelegramNotifierPort
 
 
 def make_test_bar(symbol: str, open_ts_ms: int, close_price: float) -> EnrichedMicroBarRecord:
@@ -58,7 +77,7 @@ def make_test_bar(symbol: str, open_ts_ms: int, close_price: float) -> EnrichedM
     )
 
 
-def make_test_runner_config(duration_minutes: int | None = 1) -> LivePaperRunnerConfig:
+def make_test_runner_config(duration_minutes: int | None) -> LivePaperRunnerConfig:
     return LivePaperRunnerConfig(
         symbols=["BTCUSDT", "ETHUSDT"],
         duration_minutes=duration_minutes,
@@ -66,6 +85,21 @@ def make_test_runner_config(duration_minutes: int | None = 1) -> LivePaperRunner
         log_dir="logs",
         max_tracking_duration_ms=21600000,
         check_interval_seconds=0.05,
+    )
+
+
+def make_test_model_metadata(model_id: str, role: ModelRole) -> ModelArtifactMetadata:
+    return ModelArtifactMetadata(
+        model_id=model_id,
+        role=role,
+        feature_names=["f1", "f2", "f3"],
+        trained_at_utc=datetime.now(tz=UTC),
+        training_sample_count=1000,
+        net_sharpe=2.1,
+        brier_score=0.18,
+        brier_skill_score=0.12,
+        max_drawdown_pct=0.05,
+        file_checksum="sha256_mock_checksum",
     )
 
 
@@ -92,13 +126,20 @@ def mock_runner_dependencies() -> dict[str, Any]:
 
     bar_pipeline = AsyncMock(spec=LiveBarPipelineService)
     bar_pipeline.on_1m_bar = AsyncMock()
+    bar_pipeline.reload_models = MagicMock()
 
     shadow_tracker = MagicMock(spec=ShadowOrderTracker)
     shadow_tracker.on_1m_bar = MagicMock(return_value=[])
 
     judge_adapter = AsyncMock()
-
     use_case = AsyncMock(spec=Run30mTradingCycleUseCase)
+
+    barrier_model = MagicMock(spec=CausalBarrierModelPort)
+    ood_detector = MagicMock(spec=OODDetectorPort)
+    shap_explainer = MagicMock(spec=TreeSHAPExplainerPort)
+    metadata = make_test_model_metadata("mock_champion_v1", ModelRole.CHAMPION)
+    telegram_notifier = AsyncMock(spec=TelegramNotifierPort)
+    telegram_notifier.send_emergency_alert = AsyncMock(return_value=True)
 
     return {
         "db_manager": db_manager,
@@ -109,51 +150,143 @@ def mock_runner_dependencies() -> dict[str, Any]:
         "shadow_tracker": shadow_tracker,
         "judge_adapter": judge_adapter,
         "use_case": use_case,
+        "barrier_model": barrier_model,
+        "ood_detector": ood_detector,
+        "shap_explainer": shap_explainer,
+        "model_metadata": metadata,
+        "telegram_notifier": telegram_notifier,
         "trading_logger": trading_logger,
         "agent_logger": agent_logger,
         "system_logger": system_logger,
     }
 
 
-def test_live_paper_runner_init(mock_runner_dependencies: dict[str, Any]) -> None:
-    cfg = make_test_runner_config()
-    runner = LivePaperRunner(
+def create_test_runner(
+    cfg: LivePaperRunnerConfig,
+    deps: dict[str, Any],
+) -> LivePaperRunner:
+    return LivePaperRunner(
         config=cfg,
-        db_manager=mock_runner_dependencies["db_manager"],
-        memory_repo=mock_runner_dependencies["memory_repo"],
-        gateway=mock_runner_dependencies["gateway"],
-        ws_ingestor=mock_runner_dependencies["ws_ingestor"],
-        bar_pipeline=mock_runner_dependencies["bar_pipeline"],
-        shadow_tracker=mock_runner_dependencies["shadow_tracker"],
-        judge_adapter=mock_runner_dependencies["judge_adapter"],
-        use_case=mock_runner_dependencies["use_case"],
-        trading_logger=mock_runner_dependencies["trading_logger"],
-        agent_logger=mock_runner_dependencies["agent_logger"],
-        system_logger=mock_runner_dependencies["system_logger"],
+        db_manager=deps["db_manager"],
+        memory_repo=deps["memory_repo"],
+        gateway=deps["gateway"],
+        ws_ingestor=deps["ws_ingestor"],
+        bar_pipeline=deps["bar_pipeline"],
+        shadow_tracker=deps["shadow_tracker"],
+        judge_adapter=deps["judge_adapter"],
+        use_case=deps["use_case"],
+        barrier_model=deps["barrier_model"],
+        ood_detector=deps["ood_detector"],
+        shap_explainer=deps["shap_explainer"],
+        model_metadata=deps["model_metadata"],
+        telegram_notifier=deps["telegram_notifier"],
+        trading_logger=deps["trading_logger"],
+        agent_logger=deps["agent_logger"],
+        system_logger=deps["system_logger"],
+        user_data_stream=None,
     )
+
+
+def test_fallback_models_completely_removed() -> None:
+    """Verify that heuristic fallback classes are completely removed from live_paper_runner."""
+    import trading_bot.interfaces.live_paper_runner as runner_module
+
+    assert not hasattr(runner_module, "FallbackBarrierModel")
+    assert not hasattr(runner_module, "FallbackOODDetector")
+    assert not hasattr(runner_module, "FallbackTreeSHAPExplainer")
+
+
+def test_live_paper_runner_init(mock_runner_dependencies: dict[str, Any]) -> None:
+    cfg = make_test_runner_config(duration_minutes=1)
+    runner = create_test_runner(cfg, mock_runner_dependencies)
+
     assert runner.is_running is False
     assert len(runner.cycle_history) == 0
+    assert runner.barrier_model is mock_runner_dependencies["barrier_model"]
+    assert runner.ood_detector is mock_runner_dependencies["ood_detector"]
+    assert runner.shap_explainer is mock_runner_dependencies["shap_explainer"]
+    assert runner.active_model_metadata is mock_runner_dependencies["model_metadata"]
+    assert runner.telegram_notifier is mock_runner_dependencies["telegram_notifier"]
+
+
+def test_runner_reload_active_model(mock_runner_dependencies: dict[str, Any]) -> None:
+    """Test hot-reloading active model suite in-memory with zero downtime."""
+    cfg = make_test_runner_config(duration_minutes=1)
+    runner = create_test_runner(cfg, mock_runner_dependencies)
+
+    new_barrier_model = MagicMock(spec=CausalBarrierModelPort)
+    new_ood_detector = MagicMock(spec=OODDetectorPort)
+    new_shap_explainer = MagicMock(spec=TreeSHAPExplainerPort)
+    new_metadata = make_test_model_metadata("promoted_challenger_v2", ModelRole.CHAMPION)
+
+    runner.reload_active_model(
+        new_barrier_model=new_barrier_model,
+        new_ood_detector=new_ood_detector,
+        new_shap_explainer=new_shap_explainer,
+        new_metadata=new_metadata,
+    )
+
+    assert runner.barrier_model is new_barrier_model
+    assert runner.ood_detector is new_ood_detector
+    assert runner.shap_explainer is new_shap_explainer
+    assert runner.active_model_metadata is new_metadata
+    mock_runner_dependencies["bar_pipeline"].reload_models.assert_called_once_with(
+        barrier_model=new_barrier_model,
+        ood_detector=new_ood_detector,
+        treeshap_explainer=new_shap_explainer,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_30m_cycle_fail_safe_capital_protection_on_error(
+    mock_runner_dependencies: dict[str, Any],
+) -> None:
+    """Test Fail-Safe Capital Protection: STAGE_C_ML_ERROR, zero trades, Telegram alert."""
+    mock_runner_dependencies["use_case"].execute_cycle.side_effect = RuntimeError(
+        "Corrupted booster weights or mathematical divergence"
+    )
+
+    cfg = make_test_runner_config(duration_minutes=1)
+    runner = create_test_runner(cfg, mock_runner_dependencies)
+
+    now_dt = datetime.now(tz=UTC)
+    market_inputs: dict[str, Any] = {"BTCUSDT": MagicMock(), "ETHUSDT": MagicMock()}
+
+    summary = await runner.run_30m_cycle(
+        cycle_time_utc=now_dt,
+        market_inputs=market_inputs,
+        quant_packets={},
+        current_prices={},
+        atr_30m_values={},
+    )
+
+    # 1. 100% capital protection: zero trades executed, zero shadow orders
+    assert summary.executed_orders_count == 0
+    assert summary.shadow_orders_count == 0
+
+    # 2. Rejection reason is strictly STAGE_C_ML_ERROR and funnel_passed is False
+    assert summary.btc_result.funnel_passed is False
+    assert summary.btc_result.rejection_reason == "STAGE_C_ML_ERROR"
+    assert summary.btc_result.funnel_stage == "STAGE_C_PLAYBOOK"
+
+    assert "ETHUSDT" in summary.altcoin_results
+    assert summary.altcoin_results["ETHUSDT"].funnel_passed is False
+    assert summary.altcoin_results["ETHUSDT"].rejection_reason == "STAGE_C_ML_ERROR"
+
+    # 3. Emergency alert dispatched to Telegram
+    mock_runner_dependencies["telegram_notifier"].send_emergency_alert.assert_awaited_once()
+
+    # 4. Cycle recorded in history
+    assert len(runner.cycle_history) == 1
+    assert runner.cycle_history[0] is summary
 
 
 @pytest.mark.asyncio
 async def test_handle_bar_closed_no_concluded_orders(
     mock_runner_dependencies: dict[str, Any],
 ) -> None:
-    cfg = make_test_runner_config()
-    runner = LivePaperRunner(
-        config=cfg,
-        db_manager=mock_runner_dependencies["db_manager"],
-        memory_repo=mock_runner_dependencies["memory_repo"],
-        gateway=mock_runner_dependencies["gateway"],
-        ws_ingestor=mock_runner_dependencies["ws_ingestor"],
-        bar_pipeline=mock_runner_dependencies["bar_pipeline"],
-        shadow_tracker=mock_runner_dependencies["shadow_tracker"],
-        judge_adapter=mock_runner_dependencies["judge_adapter"],
-        use_case=mock_runner_dependencies["use_case"],
-        trading_logger=mock_runner_dependencies["trading_logger"],
-        agent_logger=mock_runner_dependencies["agent_logger"],
-        system_logger=mock_runner_dependencies["system_logger"],
-    )
+    cfg = make_test_runner_config(duration_minutes=1)
+    runner = create_test_runner(cfg, mock_runner_dependencies)
 
     bar = make_test_bar("BTCUSDT", 1731162600000, 90000.0)
     await runner.handle_bar_closed(bar)
@@ -199,21 +332,8 @@ async def test_handle_bar_closed_with_concluded_order_triggers_judge(
     )
     mock_runner_dependencies["judge_adapter"].conduct_autopsy.return_value = mock_case
 
-    cfg = make_test_runner_config()
-    runner = LivePaperRunner(
-        config=cfg,
-        db_manager=mock_runner_dependencies["db_manager"],
-        memory_repo=mock_runner_dependencies["memory_repo"],
-        gateway=mock_runner_dependencies["gateway"],
-        ws_ingestor=mock_runner_dependencies["ws_ingestor"],
-        bar_pipeline=mock_runner_dependencies["bar_pipeline"],
-        shadow_tracker=mock_runner_dependencies["shadow_tracker"],
-        judge_adapter=mock_runner_dependencies["judge_adapter"],
-        use_case=mock_runner_dependencies["use_case"],
-        trading_logger=mock_runner_dependencies["trading_logger"],
-        agent_logger=mock_runner_dependencies["agent_logger"],
-        system_logger=mock_runner_dependencies["system_logger"],
-    )
+    cfg = make_test_runner_config(duration_minutes=1)
+    runner = create_test_runner(cfg, mock_runner_dependencies)
 
     bar = make_test_bar("BTCUSDT", 1731162600000, 92050.0)
     await runner.handle_bar_closed(bar)
@@ -245,21 +365,8 @@ async def test_handle_cycle_ready_dispatches_trading_cycle(
     )
     mock_runner_dependencies["use_case"].execute_cycle.return_value = mock_summary
 
-    cfg = make_test_runner_config()
-    runner = LivePaperRunner(
-        config=cfg,
-        db_manager=mock_runner_dependencies["db_manager"],
-        memory_repo=mock_runner_dependencies["memory_repo"],
-        gateway=mock_runner_dependencies["gateway"],
-        ws_ingestor=mock_runner_dependencies["ws_ingestor"],
-        bar_pipeline=mock_runner_dependencies["bar_pipeline"],
-        shadow_tracker=mock_runner_dependencies["shadow_tracker"],
-        judge_adapter=mock_runner_dependencies["judge_adapter"],
-        use_case=mock_runner_dependencies["use_case"],
-        trading_logger=mock_runner_dependencies["trading_logger"],
-        agent_logger=mock_runner_dependencies["agent_logger"],
-        system_logger=mock_runner_dependencies["system_logger"],
-    )
+    cfg = make_test_runner_config(duration_minutes=1)
+    runner = create_test_runner(cfg, mock_runner_dependencies)
 
     await runner.handle_cycle_ready(
         cycle_time_utc=now_dt,
@@ -278,22 +385,8 @@ async def test_handle_cycle_ready_dispatches_trading_cycle(
 async def test_runner_start_and_graceful_stop(
     mock_runner_dependencies: dict[str, Any],
 ) -> None:
-    # 0 duration minutes for immediate exit in loop
     cfg = make_test_runner_config(duration_minutes=0)
-    runner = LivePaperRunner(
-        config=cfg,
-        db_manager=mock_runner_dependencies["db_manager"],
-        memory_repo=mock_runner_dependencies["memory_repo"],
-        gateway=mock_runner_dependencies["gateway"],
-        ws_ingestor=mock_runner_dependencies["ws_ingestor"],
-        bar_pipeline=mock_runner_dependencies["bar_pipeline"],
-        shadow_tracker=mock_runner_dependencies["shadow_tracker"],
-        judge_adapter=mock_runner_dependencies["judge_adapter"],
-        use_case=mock_runner_dependencies["use_case"],
-        trading_logger=mock_runner_dependencies["trading_logger"],
-        agent_logger=mock_runner_dependencies["agent_logger"],
-        system_logger=mock_runner_dependencies["system_logger"],
-    )
+    runner = create_test_runner(cfg, mock_runner_dependencies)
 
     await runner.start()
 
@@ -303,3 +396,35 @@ async def test_runner_start_and_graceful_stop(
     mock_runner_dependencies["ws_ingestor"].start.assert_awaited_once()
     mock_runner_dependencies["ws_ingestor"].stop.assert_awaited_once()
     mock_runner_dependencies["db_manager"].close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runner_handle_bracket_leg_filled_cancels_opposing(
+    mock_runner_dependencies: dict[str, Any],
+) -> None:
+    """Verify that handle_bracket_leg_filled issues cancellation for opposing leg."""
+    cfg = make_test_runner_config(duration_minutes=None)
+    runner = create_test_runner(cfg, mock_runner_dependencies)
+    gateway = mock_runner_dependencies["gateway"]
+    gateway.cancel_algo_order = AsyncMock(return_value=True)
+
+    await runner.handle_bracket_leg_filled("BTCUSDT", "SL", "order_123", "order_123_tp")
+    gateway.cancel_algo_order.assert_awaited_once_with("BTCUSDT", "order_123_tp")
+
+
+@pytest.mark.asyncio
+async def test_runner_reconcile_orphan_bracket_orders(
+    mock_runner_dependencies: dict[str, Any],
+) -> None:
+    """Verify that reconcile_orphan_bracket_orders cleans up unlinked algo orders for flat positions."""
+    cfg = make_test_runner_config(duration_minutes=None)
+    runner = create_test_runner(cfg, mock_runner_dependencies)
+    gateway = mock_runner_dependencies["gateway"]
+    gateway.fetch_active_positions = AsyncMock(return_value=[])
+    gateway.fetch_open_algo_orders = AsyncMock(
+        return_value=[{"algoId": 12345, "clientAlgoId": "order_tp"}]
+    )
+    gateway.cancel_algo_order = AsyncMock(return_value=True)
+
+    await runner.reconcile_orphan_bracket_orders()
+    assert gateway.cancel_algo_order.await_count >= 1

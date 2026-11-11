@@ -12,6 +12,12 @@ from trading_bot.adapters.ml_engine.constrained_lgbm_model import (
     CANONICAL_MONOTONE_SHORT,
     ConstrainedLGBMModel,
 )
+from trading_bot.adapters.ml_engine.file_model_registry import (
+    FileModelRegistry,
+)
+from trading_bot.adapters.ml_engine.model_trainer_adapter import (
+    LGBMModelTrainerAdapter,
+)
 from trading_bot.adapters.ml_engine.native_treeshap_explainer import (
     NativeTreeSHAPExplainer,
 )
@@ -27,6 +33,8 @@ __all__ = [
     "CANONICAL_MONOTONE_SHORT",
     "ConformalSubspaceOODDetector",
     "ConstrainedLGBMModel",
+    "FileModelRegistry",
+    "LGBMModelTrainerAdapter",
     "NativeTreeSHAPExplainer",
     "OOFRidgePrior",
     "TabulatedVennAbersCalibrator",
