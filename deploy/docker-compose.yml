@@ -79,9 +79,9 @@ services:
         condition: service_started
     volumes:
       - logs:/app/logs
-      - data:/app/data
+      - ../data:/app/data
       - reports:/app/reports
-      - models:/app/models
+      - ../models:/app/models
     networks:
       - trading_net
 
@@ -90,9 +90,7 @@ volumes:
   redis_data:
   ninerouter_config:
   logs:
-  data:
   reports:
-  models:
 
 networks:
   trading_net:

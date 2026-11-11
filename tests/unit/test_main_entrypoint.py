@@ -386,6 +386,7 @@ def create_test_env() -> dict[str, str]:
         "TELEGRAM_CHAT_ID": "5577408890",
         "TELEGRAM_POLL_TIMEOUT": "10",
         "LOG_DIR": "logs",
+        "DATASET_36M_PATH": "__absent_in_unit_tests__",
     }
 
 
@@ -873,6 +874,8 @@ async def test_daemon_initializes_model_services_and_wires_telegram_hooks(tmp_pa
     mock_telegram.start = AsyncMock()
     mock_telegram.stop = AsyncMock()
     mock_telegram.send_message = AsyncMock()
+    mock_telegram.send_text_message = AsyncMock()
+    mock_telegram.set_challenger_pending = MagicMock()
     mock_telegram.set_execution_mode = MagicMock()
     mock_telegram.set_account_context = MagicMock()
     mock_telegram.set_on_mode_change = MagicMock()
@@ -905,8 +908,17 @@ async def test_daemon_initializes_model_services_and_wires_telegram_hooks(tmp_pa
     mock_telegram.set_on_approve_model.assert_called_once()
     mock_telegram.set_on_retrain.assert_called_once()
 
-    # Verify on_retrain_hook launches background training
+    # Verify on_retrain_hook launches background training & sends comparison report + inline button
     retrain_res = await daemon.on_retrain_hook("fast")
     assert "Challenger retraining job launched" in retrain_res
+    if daemon.background_tasks:
+        await asyncio.gather(*list(daemon.background_tasks))
+
+    mock_telegram.set_challenger_pending.assert_called_with(True)
+    mock_telegram.send_text_message.assert_awaited()
+    sent_text, sent_kb = mock_telegram.send_text_message.call_args[0]
+    assert "BÁO CÁO ĐỐI ĐẦU CHAMPION vs CHALLENGER" in sent_text
+    assert sent_kb is not None
+    assert sent_kb[0][0].callback_data == "confirm_approve_model"
 
     await daemon.shutdown()

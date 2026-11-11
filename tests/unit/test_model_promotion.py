@@ -54,6 +54,7 @@ def promotion_setup(
         model_trainer=trainer,
         canonical_features=list(CANONICAL_FEATURES),
         default_sample_count=120,
+        dataset_path=None,
     )
 
     mock_runner = MagicMock()

@@ -1,10 +1,10 @@
-name: CI Verification Loop
+name: CI/CD Pipeline & VPS Deployment
 
 on:
   push:
-    branches: [main, master, develop]
+    branches: [main]
   pull_request:
-    branches: [main, master, develop]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -101,3 +101,28 @@ jobs:
           docker compose -f deploy/docker-compose.ninerouter.yml config --quiet
           docker compose -f deploy/docker-compose.app.yml config --quiet
           docker compose -f deploy/docker-compose.yml config --quiet
+
+  deploy:
+    name: Continuous Deployment to VPS
+    needs: verify
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port: 22
+          script_stop: true
+          script: |
+            echo "🚀 [CD] Connecting to VPS..."
+            cd ~/LLM_trading_bot_v2
+            echo "🔄 [CD] Pulling latest changes from main..."
+            git pull origin main
+            echo "🔨 [CD] Building trading bot container..."
+            docker compose -f deploy/docker-compose.yml build trading-bot
+            echo "⚡ [CD] Starting production services..."
+            docker compose -f deploy/docker-compose.yml up -d
+            echo "✅ [CD] Deployment completed successfully!"

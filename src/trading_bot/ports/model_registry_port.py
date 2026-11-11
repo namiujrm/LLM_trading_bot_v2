@@ -147,3 +147,71 @@ class ModelTrainerPort(Protocol):
             Tuple of (train_features, y_long, y_short, sample_weights, calibration_features).
         """
         ...
+
+    def load_dataset_from_parquet(
+        self,
+        *,
+        parquet_path: str,
+        feature_names: Sequence[str],
+        cal_ratio: float,
+    ) -> tuple[
+        list[list[float]],
+        list[int],
+        list[int],
+        list[float],
+        list[list[float]],
+        int,
+    ]:
+        """Load real empirical dataset from parquet file and partition into train/calibration sets.
+
+        Args:
+            parquet_path: Path to parquet dataset containing features, targets, and weights.
+            feature_names: Sequence of feature column names.
+            cal_ratio: Proportion of dataset reserved for causal OOD calibration.
+
+        Returns:
+            Tuple of (train_features, y_long, y_short, sample_weights, calibration_features, total_samples).
+        """
+        ...
+
+    def roll_dataset_window(
+        self,
+        *,
+        base_parquet_path: str,
+        new_bars_parquet_path: str | None,
+        max_bars_per_symbol: int,
+        output_parquet_path: str,
+    ) -> int:
+        """Roll FIFO dataset window by appending new weekly bars and trimming oldest bars.
+
+        Args:
+            base_parquet_path: Path to existing base parquet dataset.
+            new_bars_parquet_path: Path to new weekly bar parquet, or None if no update.
+            max_bars_per_symbol: Maximum number of historical bars retained per symbol (e.g. 52608 for 36M).
+            output_parquet_path: Destination path for updated rolling dataset.
+
+        Returns:
+            Total row count of the rolled dataset.
+        """
+        ...
+
+    def evaluate_model_on_parquet(
+        self,
+        *,
+        model: CausalBarrierModelPort,
+        parquet_path: str,
+        feature_names: Sequence[str],
+        cal_ratio: float,
+    ) -> dict[str, float]:
+        """Evaluate fitted CausalBarrierModelPort on chronological holdout slice.
+
+        Args:
+            model: Fitted barrier model implementing CausalBarrierModelPort.
+            parquet_path: Path to empirical parquet dataset.
+            feature_names: Sequence of feature column names.
+            cal_ratio: Proportion of trailing rows used as calibration/validation slice.
+
+        Returns:
+            Dict containing 'brier_score', 'brier_skill_score', 'net_sharpe', 'max_drawdown_pct'.
+        """
+        ...
