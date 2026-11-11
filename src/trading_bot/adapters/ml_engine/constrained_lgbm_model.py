@@ -306,7 +306,7 @@ class ConstrainedLGBMModel(CausalBarrierModelPort):
             weight=w_arr,
             init_score=oof_logits_long,
             feature_name=list(self._feature_names),
-            free_raw_data=False,
+            free_raw_data=True,
         )
         ds_short = lgb.Dataset(
             data=x_arr,
@@ -314,7 +314,7 @@ class ConstrainedLGBMModel(CausalBarrierModelPort):
             weight=w_arr,
             init_score=oof_logits_short,
             feature_name=list(self._feature_names),
-            free_raw_data=False,
+            free_raw_data=True,
         )
 
         # 3. Parameters configuration
@@ -330,6 +330,7 @@ class ConstrainedLGBMModel(CausalBarrierModelPort):
             "reg_alpha": self._config.reg_alpha,
             "reg_lambda": self._config.reg_lambda,
             "interaction_constraints": self._interaction_constraints,
+            "num_threads": 1,
             "verbosity": -1,
         }
 

@@ -46,6 +46,7 @@ from trading_bot.domain.entities.common.enums import TradeSide
 from trading_bot.domain.entities.execution.shadow_order import ShadowOrderRecord
 from trading_bot.domain.entities.market.market_state import SemanticQuantPacket
 from trading_bot.domain.entities.ml.ml_configs import TreeSHAPConfig
+from trading_bot.domain.entities.ml.model_registry_entities import ModelArtifactMetadata
 from trading_bot.domain.entities.risk.account_state import (
     AccountPortfolioContext,
     ActivePositionSnapshot,
@@ -53,6 +54,7 @@ from trading_bot.domain.entities.risk.account_state import (
 from trading_bot.domain.entities.telegram.telegram_models import (
     TelegramCommandRequest,
     TelegramCycleReport,
+    TelegramInlineButton,
 )
 from trading_bot.domain.exceptions import (
     ChampionModelNotFoundError,
@@ -185,6 +187,10 @@ class TradingBotSystemDaemon:
     def promotion_service(self) -> ModelPromotionService | None:
         return self._promotion_service
 
+    @property
+    def background_tasks(self) -> set[asyncio.Task[Any]]:
+        return self._background_tasks
+
     # -------------------------------------------------------------------------
     # Lifecycle: Initialize, Run, Shutdown
     # -------------------------------------------------------------------------
@@ -271,41 +277,35 @@ class TradingBotSystemDaemon:
         trainer_adapter = LGBMModelTrainerAdapter.create_canonical(
             tree_shap_config=tree_shap_cfg,
         )
+        if "DATASET_36M_PATH" in self._env and len(self._env["DATASET_36M_PATH"].strip()) > 0:
+            dataset_36m_path = self._env["DATASET_36M_PATH"].strip()
+        else:
+            dataset_36m_path = "data/features_36m/36m_features_labels_all_4pairs.parquet"
+
         self._training_service = ModelTrainingService(
             model_registry=self._model_registry,
             model_trainer=trainer_adapter,
             canonical_features=list(CANONICAL_FEATURES),
             default_sample_count=250,
+            dataset_path=dataset_36m_path,
         )
 
-        # 6. Load or Bootstrap Champion Model
-        try:
-            (
-                barrier_model,
-                ood_detector,
-                shap_explainer,
-                model_meta,
-            ) = await self._model_registry.load_champion_model()
-            logger.info("Loaded active Champion model: %s", model_meta.model_id)
-        except (ChampionModelNotFoundError, ModelArtifactCorruptError) as exc:
-            logger.warning(
-                "Champion model not found or invalid in %s: %s. Auto-bootstrapping baseline...",
-                models_dir,
-                exc,
-            )
-            model_meta = await self._training_service.bootstrap_initial_champion(
-                market_data_port=self._gateway
-                if isinstance(self._gateway, MarketDataPort)
-                else None,
-                historical_bars=None,
-            )
-            (
-                barrier_model,
-                ood_detector,
-                shap_explainer,
-                _,
-            ) = await self._model_registry.load_champion_model()
-            logger.info("Auto-bootstrapped and loaded Champion model: %s", model_meta.model_id)
+        # 6. Load or Bootstrap/Upgrade Champion Model
+        model_meta = await self._training_service.bootstrap_initial_champion(
+            market_data_port=self._gateway if isinstance(self._gateway, MarketDataPort) else None,
+            historical_bars=None,
+        )
+        (
+            barrier_model,
+            ood_detector,
+            shap_explainer,
+            _,
+        ) = await self._model_registry.load_champion_model()
+        logger.info(
+            "Active Champion model ready: %s (%d training samples)",
+            model_meta.model_id,
+            model_meta.training_sample_count,
+        )
 
         # 7. Initialize Live Runner if needed
         if self._runner is None:
@@ -963,16 +963,82 @@ class TradingBotSystemDaemon:
                 )
                 if self._telegram_adapter is not None:
                     self._telegram_adapter.set_challenger_pending(True)
-                    msg = (
-                        f"🤖 *CHALLENGER MODEL ĐÃ HUẤN LUYỆN XONG*\n\n"
-                        f"• *ID:* `{meta.model_id}`\n"
-                        f"• *Net Sharpe:* `{meta.net_sharpe:.2f}`\n"
-                        f"• *Brier Skill Score:* `{meta.brier_skill_score:.4f}`\n"
-                        f"• *Max Drawdown:* `{meta.max_drawdown_pct:.2%}`\n"
-                        f"• *Số mẫu:* `{meta.training_sample_count}`\n\n"
-                        f"🏆 Dùng `/approve_model` để xác nhận thăng hạng model này thành Champion mới!"
-                    )
-                    await self._telegram_adapter.send_text_message(msg, None)
+
+                    champ_meta: ModelArtifactMetadata | None = None
+                    if self._model_registry is not None:
+                        try:
+                            _, _, _, champ_meta = await self._model_registry.load_champion_model()
+                        except (ChampionModelNotFoundError, ModelArtifactCorruptError):
+                            champ_meta = None
+
+                    if champ_meta is not None:
+                        sharpe_diff = meta.net_sharpe - champ_meta.net_sharpe
+                        bss_diff = meta.brier_skill_score - champ_meta.brier_skill_score
+                        bs_diff = meta.brier_score - champ_meta.brier_score
+                        dd_diff = meta.max_drawdown_pct - champ_meta.max_drawdown_pct
+
+                        if sharpe_diff >= 0.0:
+                            sharpe_icon = "🟢"
+                        else:
+                            sharpe_icon = "🔴"
+                        if bss_diff >= 0.0:
+                            bss_icon = "🟢"
+                        else:
+                            bss_icon = "🔴"
+                        if bs_diff <= 0.0:
+                            bs_icon = "🟢"
+                        else:
+                            bs_icon = "🔴"
+                        if dd_diff <= 0.0:
+                            dd_icon = "🟢"
+                        else:
+                            dd_icon = "🔴"
+
+                        if sharpe_diff >= 0.0 and dd_diff <= 0.01:
+                            verdict_text = "✅ KHUYẾN NGHỊ THĂNG HẠNG"
+                        else:
+                            verdict_text = "⚠️ CÂN NHẮC TRƯỚC KHI DUYỆT"
+
+                        msg = (
+                            f"🏆 *BÁO CÁO ĐỐI ĐẦU CHAMPION vs CHALLENGER*\n\n"
+                            f"• *Champion (Đương kim):* `{champ_meta.model_id}`\n"
+                            f"• *Challenger (Thách đấu):* `{meta.model_id}`\n\n"
+                            f"📊 *Bảng so sánh Định lượng (Holdout OOS):*\n"
+                            f"1. *Net Sharpe:* `{champ_meta.net_sharpe:.2f}` ➔ `{meta.net_sharpe:.2f}` ({sharpe_icon} `{sharpe_diff:+.2f}`)\n"
+                            f"2. *Brier Skill (BSS):* `{champ_meta.brier_skill_score:.4f}` ➔ `{meta.brier_skill_score:.4f}` ({bss_icon} `{bss_diff:+.4f}`)\n"
+                            f"3. *Brier Score:* `{champ_meta.brier_score:.4f}` ➔ `{meta.brier_score:.4f}` ({bs_icon} `{bs_diff:+.4f}`)\n"
+                            f"4. *Max Drawdown:* `{champ_meta.max_drawdown_pct:.2%}` ➔ `{meta.max_drawdown_pct:.2%}` ({dd_icon} `{dd_diff:+.2%}`)\n"
+                            f"5. *Số mẫu (36M Rolling):* `{champ_meta.training_sample_count:,}` ➔ `{meta.training_sample_count:,}`\n\n"
+                            f"🎯 *Kết luận:* {verdict_text}\n"
+                            f"Bấm nút bên dưới để thăng hạng Challenger (Hot-Reload không dừng bot) hoặc dùng `/approve_model`:"
+                        )
+                    else:
+                        msg = (
+                            f"🤖 *CHALLENGER MODEL ĐÃ HUẤN LUYỆN XONG*\n\n"
+                            f"• *ID:* `{meta.model_id}`\n"
+                            f"• *Net Sharpe:* `{meta.net_sharpe:.2f}`\n"
+                            f"• *Brier Skill Score:* `{meta.brier_skill_score:.4f}`\n"
+                            f"• *Brier Score:* `{meta.brier_score:.4f}`\n"
+                            f"• *Max Drawdown:* `{meta.max_drawdown_pct:.2%}`\n"
+                            f"• *Số mẫu:* `{meta.training_sample_count:,}`\n\n"
+                            f"🏆 Dùng nút bên dưới hoặc `/approve_model` để xác nhận thăng hạng!"
+                        )
+
+                    approve_keyboard: list[list[TelegramInlineButton]] = [
+                        [
+                            TelegramInlineButton(
+                                text="🏆 Xác nhận Thăng hạng Ngay",
+                                callback_data="confirm_approve_model",
+                                url=None,
+                            ),
+                            TelegramInlineButton(
+                                text="❌ Giữ lại Champion",
+                                callback_data="cancel_approve_model",
+                                url=None,
+                            ),
+                        ]
+                    ]
+                    await self._telegram_adapter.send_text_message(msg, approve_keyboard)
             except Exception as exc:
                 logger.error("Background Challenger retraining failed: %s", exc, exc_info=True)
                 if self._telegram_adapter is not None:
