@@ -245,6 +245,9 @@ def test_treeshap_readiness_and_latency(
     model.fit(x.tolist(), y_l.tolist(), y_s.tolist(), w.tolist(), sample_intervals=None)
 
     sample = x[:1]
+    # Warm-up 1 call to avoid cold C++ allocator / CI VM jitter in microbenchmark
+    _ = model.long_booster.predict(sample, pred_contrib=True)
+
     t0 = time.perf_counter()
     shap_vals = np.asarray(model.long_booster.predict(sample, pred_contrib=True))
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
