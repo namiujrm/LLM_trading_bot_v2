@@ -127,6 +127,10 @@ class LiveBarPipelineService:
         self._alt_15m_returns: dict[str, list[float]] = {s: [] for s in self._symbols}
         self._catchup_gaps: dict[str, list[float]] = {s: [] for s in self._symbols}
 
+        # Cycle deduplication tracking (Zero Defaults, fail-fast)
+        self._last_dispatched_cycle_ts_ms: int = 0
+        self._cycle_closed_symbols: dict[int, set[str]] = {}
+
     async def on_1m_bar(self, bar: EnrichedMicroBarRecord) -> None:
         """Ingest a 1-minute enriched bar from the WebSocket ingestor."""
         symbol = bar.symbol.upper()
@@ -197,6 +201,79 @@ class LiveBarPipelineService:
         bar_close_ts = bar.open_time_ms + 60000
         if bar_close_ts % 1800000 == 0:
             await self._process_30m_candle_close(symbol, bar_close_ts)
+
+    async def warmup_historical_bars(self, symbol: str, bars: list[EnrichedMicroBarRecord]) -> None:
+        """Warm up rolling buffers with historical 1m bars without triggering live trading cycles."""
+        upper_sym = symbol.upper()
+        if upper_sym not in self._bars_1m:
+            self._bars_1m[upper_sym] = []
+            self._bars_15m[upper_sym] = []
+            self._bars_30m[upper_sym] = []
+            self._vpin_history[upper_sym] = []
+            self._alt_15m_returns[upper_sym] = []
+            self._catchup_gaps[upper_sym] = []
+
+        sorted_bars = sorted(bars, key=lambda b: b.open_time_ms)
+        for b in sorted_bars:
+            self._bars_1m[upper_sym].append(b)
+            if len(self._bars_1m[upper_sym]) > 300:
+                self._bars_1m[upper_sym].pop(0)
+
+            self._current_prices[upper_sym] = b.close
+            self._resample_15m(upper_sym, b)
+            self._resample_30m(upper_sym, b)
+            self._update_cross_asset_returns(upper_sym)
+
+        self._update_atr_30m(upper_sym)
+
+        if self._bars_1m[upper_sym]:
+            micro_bars = [
+                MicroBar1m(
+                    timestamp_ms=b.open_time_ms,
+                    open=b.open,
+                    high=b.high,
+                    low=b.low,
+                    close=b.close,
+                    volume=b.volume,
+                )
+                for b in self._bars_1m[upper_sym]
+            ]
+            micro_metrics = await self._quant_engine.compute_microstructure_metrics(
+                upper_sym, micro_bars
+            )
+            self._latest_micro[upper_sym] = micro_metrics
+            self._vpin_history[upper_sym].append(micro_metrics.vpin)
+            if len(self._vpin_history[upper_sym]) > 50:
+                self._vpin_history[upper_sym].pop(0)
+
+            bars_for_regime = self._get_bars_for_regime(upper_sym)
+            try:
+                regime_metrics = await self._quant_engine.compute_regime_state(
+                    upper_sym, bars_for_regime
+                )
+            except InsufficientDataException:
+                regime_metrics = RegimeMetrics(
+                    hurst_exponent=0.50,
+                    yang_zhang_vol=0.02,
+                    garman_klass_vol=0.02,
+                    parkinson_vol=0.02,
+                    bipower_variation=0.02,
+                    jump_z_score=0.0,
+                    has_volatility_jump=False,
+                    shannon_entropy=0.50,
+                    permutation_entropy=0.50,
+                    tsallis_entropy=0.50,
+                    regime_label=MarketRegime.RANDOM_WALK_NOISE,
+                )
+            self._latest_regime[upper_sym] = regime_metrics
+
+        logger.info(
+            "Warmed up rolling buffer for %s with %d 1m bars (15m: %d, 30m: %d)",
+            upper_sym,
+            len(self._bars_1m[upper_sym]),
+            len(self._bars_15m[upper_sym]),
+            len(self._bars_30m[upper_sym]),
+        )
 
     def _get_bars_for_regime(self, symbol: str) -> list[MultiTFBar]:
         """Provide at least 20 MultiTFBars for regime calculations."""
@@ -376,25 +453,39 @@ class LiveBarPipelineService:
         quant_packet = await self._quant_engine.evaluate_quant_packet(symbol, close_ts_ms)
         self._latest_quant_packets[symbol] = quant_packet
 
-        # 2. Causal Barrier Model ML Inference
-        sample_features_11 = quant_packet.trajectory_vector_16d[:11]
-        barrier_pred = self._barrier_model.predict(sample_features_11)
-
-        # 3. Conformal Subspace OOD Detection
-        features_ood = quant_packet.trajectory_vector_16d[:6]
-        ood_result = self._ood_detector.predict(features_ood)
-
-        # 4. Native TreeSHAP Attribution
         bar_dt = datetime.fromtimestamp(close_ts_ms / 1000.0, tz=UTC)
-        shap_result = self._treeshap_explainer.explain(
-            sample_features_11,
-            CANONICAL_FEATURE_NAMES,
-            self._barrier_model,
-            symbol,
-            bar_dt,
-            "long_barrier",
-        )
-        self._latest_shap_results[symbol] = shap_result
+        # 2. Causal Barrier Model ML Inference & Attribution (Fail-Safe Capital Protection)
+        try:
+            sample_features_11 = quant_packet.trajectory_vector_16d[:11]
+            barrier_pred = self._barrier_model.predict(sample_features_11)
+
+            # 3. Conformal Subspace OOD Detection
+            ood_result = self._ood_detector.predict(sample_features_11)
+
+            # 4. Native TreeSHAP Attribution
+            shap_result = self._treeshap_explainer.explain(
+                sample_features_11,
+                CANONICAL_FEATURE_NAMES,
+                self._barrier_model,
+                symbol,
+                bar_dt,
+                "long_barrier",
+            )
+            self._latest_shap_results[symbol] = shap_result
+            p_long_val = barrier_pred.p_long
+            p_short_val = barrier_pred.p_short
+            unc_width = max(0.01, min(0.50, barrier_pred.coherence_penalty + 0.02))
+            is_ood_val = ood_result.is_ood
+        except Exception as exc:
+            logger.error(
+                "ML model inference failed for %s on 30m candle close: %s. Enforcing Fail-Safe Capital Protection.",
+                symbol,
+                exc,
+            )
+            p_long_val = 0.0
+            p_short_val = 0.0
+            unc_width = 1.0
+            is_ood_val = True
 
         # 5. Extract microstructure and regime features
         micro_metrics = self._latest_micro[symbol]
@@ -414,10 +505,10 @@ class LiveBarPipelineService:
             garman_klass_vol=regime_metrics.garman_klass_vol,
             is_blackout=False,
             is_account_frozen=False,
-            p_long_cal=barrier_pred.p_long,
-            p_short_cal=barrier_pred.p_short,
-            uncertainty_width=max(0.01, min(0.50, barrier_pred.coherence_penalty + 0.02)),
-            is_ood=ood_result.is_ood,
+            p_long_cal=p_long_val,
+            p_short_cal=p_short_val,
+            uncertainty_width=unc_width,
+            is_ood=is_ood_val,
             hurst_exp=regime_metrics.hurst_exponent,
             oi_quadrant=quant_packet.oi_quadrant,
             vpin_percentile=min(100.0, max(0.0, micro_metrics.vpin * 100.0)),
@@ -435,9 +526,22 @@ class LiveBarPipelineService:
         if self._on_30m_bar is not None:
             await self._on_30m_bar(symbol, funnel_input, quant_packet)
 
-        # 9. If all target symbols have completed 30m close, trigger full cycle callback
-        all_completed = all(s in self._latest_funnel_inputs for s in self._symbols)
-        if all_completed and self._on_cycle_ready is not None:
+        # 9. Track symbols that have completed this specific 30m candle close
+        if close_ts_ms not in self._cycle_closed_symbols:
+            self._cycle_closed_symbols[close_ts_ms] = set()
+        self._cycle_closed_symbols[close_ts_ms].add(symbol)
+
+        # Trigger full cycle callback exactly once when all symbols for this candle close are ready
+        all_completed = self._cycle_closed_symbols[close_ts_ms].issuperset(self._symbols)
+        is_new_cycle = close_ts_ms > self._last_dispatched_cycle_ts_ms
+
+        if all_completed and is_new_cycle and self._on_cycle_ready is not None:
+            self._last_dispatched_cycle_ts_ms = close_ts_ms
+            # Clean up older cycle records to prevent memory leak
+            stale_keys = [ts for ts in self._cycle_closed_symbols if ts < close_ts_ms]
+            for old_ts in stale_keys:
+                del self._cycle_closed_symbols[old_ts]
+
             await self._on_cycle_ready(
                 bar_dt,
                 dict(self._latest_funnel_inputs),
@@ -571,3 +675,14 @@ class LiveBarPipelineService:
         if upper_sym in self._latest_shap_results:
             return self._latest_shap_results[upper_sym]
         return None
+
+    def reload_models(
+        self,
+        barrier_model: CausalBarrierModelPort,
+        ood_detector: OODDetectorPort,
+        treeshap_explainer: TreeSHAPExplainerPort,
+    ) -> None:
+        """Hot-reload machine learning model ports in-memory with zero downtime."""
+        self._barrier_model = barrier_model
+        self._ood_detector = ood_detector
+        self._treeshap_explainer = treeshap_explainer

@@ -100,6 +100,32 @@ class OOFRidgePrior:
             return float(intercept_val[0])
         return float(intercept_val)
 
+    @classmethod
+    def from_saved_weights(
+        cls,
+        config: RidgePriorConfig,
+        random_state: int,
+        n_features: int,
+        coefficients: Sequence[float],
+        intercept: float,
+    ) -> OOFRidgePrior:
+        """Construct fitted OOFRidgePrior from previously saved linear weights and intercept."""
+        prior = cls(config=config, random_state=random_state)
+        clf = LogisticRegression(
+            C=config.ridge_c,
+            max_iter=config.ridge_max_iter,
+            random_state=random_state,
+            solver="lbfgs",
+        )
+        clf.coef_ = np.asarray(coefficients, dtype=np.float64).reshape(1, -1)
+        clf.intercept_ = np.asarray([intercept], dtype=np.float64)
+        clf.classes_ = np.array([0, 1], dtype=np.int64)
+
+        prior._full_model = clf
+        prior._n_features = n_features
+        prior._oof_logits = np.zeros(1, dtype=np.float64)
+        return prior
+
     def fit(
         self,
         features: Sequence[Sequence[float]],

@@ -122,6 +122,27 @@ class MockExecutionGateway(ExecutionGatewayPort):
     async def fetch_pending_orders(self) -> list[PendingOrderSnapshot]:
         return []
 
+    async def cancel_algo_order(self, symbol: str, algo_id: str) -> bool:
+        return True
+
+    async def fetch_open_algo_orders(self, symbol: str) -> list[dict[str, Any]]:
+        return []
+
+    async def fetch_symbol_filters(self) -> dict[str, Any]:
+        return {}
+
+    async def fetch_recent_klines_1m(self, symbol: str, limit: int) -> list[Any]:
+        return []
+
+    async def create_user_data_stream(self) -> str:
+        return "mock_listen_key"
+
+    async def keepalive_user_data_stream(self, listen_key: str) -> None:
+        pass
+
+    async def close_user_data_stream(self, listen_key: str) -> None:
+        pass
+
 
 class MockMarketScout(MarketScoutPort):
     def __init__(self, proposed_sides: dict[str, TradeSide]) -> None:

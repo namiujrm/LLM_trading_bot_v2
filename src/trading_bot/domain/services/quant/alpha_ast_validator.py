@@ -28,6 +28,17 @@ ALLOWED_FEATURE_COLUMNS: frozenset[str] = frozenset(
         "returns",
         "ofi_sum",
         "spread_bps_mean",
+        "vpin",
+        "obi",
+        "hurst",
+        "yang_zhang_vol",
+        "fracdiff_close",
+        "funding_rate",
+        "open_interest",
+        "basis_bps",
+        "liquidation_vol",
+        "btc_returns",
+        "beta_divergence",
     }
 )
 

@@ -1,0 +1,24 @@
+{
+  "model_id": "champion_bootstrap_20261110_203436",
+  "role": "CHAMPION",
+  "feature_names": [
+    "hurst_exponent_100",
+    "shannon_entropy_50",
+    "fracdiff_momentum_z",
+    "vpin_toxicity_pct",
+    "taker_cvd_z_24",
+    "ofi_imbalance_z",
+    "kyle_lambda_log",
+    "oi_directional_score",
+    "funding_crowded_pos_z",
+    "funding_crowded_neg_z",
+    "btc_lead_catchup_gap"
+  ],
+  "trained_at_utc": "2026-11-10T20:34:36.885373Z",
+  "training_sample_count": 180,
+  "net_sharpe": 2.15,
+  "brier_score": 0.175,
+  "brier_skill_score": 0.13,
+  "max_drawdown_pct": 0.07,
+  "file_checksum": "0dcbe69461f5fb6c3b1fe08298da00fbce03b00ab3dcf28dec157cb44db06873"
+}

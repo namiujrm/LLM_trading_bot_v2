@@ -28,3 +28,27 @@ class DegeneratePriceSeriesException(DomainException):
 
 class UnsafeAlphaExpressionError(DomainException, ValueError):
     """Raised when an alpha formula violates AST safety, complexity, or causality invariants."""
+
+
+class MalformedModelResponseException(DomainException, ValueError):
+    """Raised when LLM response is unparseable, malformed, or missing required fields."""
+
+
+class InvalidCausalClusterException(DomainException, ValueError):
+    """Raised when an unknown or invalid causal cluster is specified."""
+
+
+class ChampionModelNotFoundError(DomainException):
+    """Raised when active champion model artifacts cannot be found on disk."""
+
+
+class ChallengerModelNotFoundError(DomainException):
+    """Raised when challenger model artifacts cannot be found on disk."""
+
+
+class ModelArtifactCorruptError(DomainException):
+    """Raised when persistent model artifacts are corrupt, invalid, or fail checksum validation."""
+
+
+class ExchangeFilterViolationError(DomainException, ValueError):
+    """Raised when order parameters violate exchange precision, lot size, or min notional rules."""

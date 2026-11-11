@@ -29,6 +29,11 @@ from trading_bot.domain.entities.ml.ml_predictions import (
     SHAPDriverContribution,
     SHAPExplanationResult,
 )
+from trading_bot.domain.entities.ml.model_registry_entities import (
+    ModelArtifactMetadata,
+    ModelPromotionRecord,
+    ModelRole,
+)
 
 __all__ = [
     "BarrierLabel",
@@ -44,6 +49,9 @@ __all__ = [
     "FastVennAbersConfig",
     "LGBMMonotonicConstraints",
     "LabelSpan",
+    "ModelArtifactMetadata",
+    "ModelPromotionRecord",
+    "ModelRole",
     "OODDetectionResult",
     "PurgedCVConfig",
     "RidgePriorConfig",

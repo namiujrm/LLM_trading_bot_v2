@@ -69,6 +69,7 @@ services:
       REDIS_HOST: trading_redis_governor
       REDIS_PORT: 6379
       NINEROUTER_BASE_URL: http://trading_9router_gateway:20128/v1
+      EXECUTION_MODE: ${EXECUTION_MODE:-TESTNET}
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -77,11 +78,10 @@ services:
       ninerouter:
         condition: service_started
     volumes:
-      - ../src:/app/src
-      - ../tests:/app/tests
-      - ../scripts:/app/scripts
-      - ../sql:/app/sql
-      - ../data:/app/data
+      - logs:/app/logs
+      - data:/app/data
+      - reports:/app/reports
+      - models:/app/models
     networks:
       - trading_net
 
@@ -89,6 +89,10 @@ volumes:
   tsdb_data:
   redis_data:
   ninerouter_config:
+  logs:
+  data:
+  reports:
+  models:
 
 networks:
   trading_net:

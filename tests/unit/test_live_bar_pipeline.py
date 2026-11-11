@@ -477,3 +477,97 @@ async def test_30m_candle_close_triggers_ml_ood_treeshap_emission() -> None:
     assert pipeline.get_latest_quant_packet("ETHUSDT").symbol == "ETHUSDT"
     assert pipeline.get_latest_shap_result("BTCUSDT") is not None
     assert pipeline.get_atr_30m_values()["BTCUSDT"] > 0.0
+
+
+@pytest.mark.asyncio
+async def test_30m_candle_cycle_deduplication_exact_once() -> None:
+    """Verify that on_cycle_ready fires exactly once per 30m candle and does not duplicate."""
+    quant_engine = MockQuantEngine()
+    barrier_model = MockBarrierModel(p_long=0.68, p_short=0.15)
+    ood_detector = MockOODDetector(is_ood=False)
+    treeshap = MockTreeSHAPExplainer()
+
+    cycle_dispatches: list[datetime] = []
+
+    async def on_cycle(
+        cycle_dt: datetime,
+        inputs: dict[str, TieredFunnelInput],
+        packets: dict[str, SemanticQuantPacket],
+        prices: dict[str, float],
+        atrs: dict[str, float],
+    ) -> None:
+        cycle_dispatches.append(cycle_dt)
+
+    pipeline = LiveBarPipelineService(
+        symbols=["BTCUSDT", "ETHUSDT"],
+        quant_engine=quant_engine,
+        barrier_model=barrier_model,
+        ood_detector=ood_detector,
+        treeshap_explainer=treeshap,
+        on_30m_bar=None,
+        on_cycle_ready=on_cycle,
+    )
+
+    base_ts = 1700001000000  # Divisible by 1800000
+    # Feed 2 complete 30m cycles (60 1m bars for each symbol)
+    for i in range(60):
+        ts = base_ts + i * 60000
+        await pipeline.on_1m_bar(make_sample_1m_bar("BTCUSDT", ts, 40000.0 + i))
+        await pipeline.on_1m_bar(make_sample_1m_bar("ETHUSDT", ts, 2500.0 + i))
+
+    # Exactly 2 cycles should have fired (one at bar 29, one at bar 59)
+    assert len(cycle_dispatches) == 2
+
+    # Duplicate / delayed bar at bar 59 should NOT fire a 3rd cycle
+    delayed_ts = base_ts + 59 * 60000
+    await pipeline.on_1m_bar(make_sample_1m_bar("BTCUSDT", delayed_ts, 40060.0))
+    await pipeline.on_1m_bar(make_sample_1m_bar("ETHUSDT", delayed_ts, 2560.0))
+    assert len(cycle_dispatches) == 2
+
+
+@pytest.mark.asyncio
+async def test_warmup_historical_bars_populates_buffers_without_triggering_cycles() -> None:
+    """Verify that warmup_historical_bars pre-fills buffers without firing on_cycle_ready."""
+    quant_engine = MockQuantEngine()
+    barrier_model = MockBarrierModel(p_long=0.70, p_short=0.10)
+    ood_detector = MockOODDetector(is_ood=False)
+    treeshap = MockTreeSHAPExplainer()
+
+    cycle_dispatches: list[datetime] = []
+
+    async def on_cycle(
+        cycle_dt: datetime,
+        inputs: dict[str, TieredFunnelInput],
+        packets: dict[str, SemanticQuantPacket],
+        prices: dict[str, float],
+        atrs: dict[str, float],
+    ) -> None:
+        cycle_dispatches.append(cycle_dt)
+
+    pipeline = LiveBarPipelineService(
+        symbols=["BTCUSDT"],
+        quant_engine=quant_engine,
+        barrier_model=barrier_model,
+        ood_detector=ood_detector,
+        treeshap_explainer=treeshap,
+        on_30m_bar=None,
+        on_cycle_ready=on_cycle,
+    )
+
+    base_ts = 1700001000000  # Exactly aligned with 15m and 30m candle boundaries
+    bars = [make_sample_1m_bar("BTCUSDT", base_ts + i * 60000, 50000.0 + i) for i in range(120)]
+
+    await pipeline.warmup_historical_bars("BTCUSDT", bars)
+
+    # 1. Buffers populated
+    bars_1m = pipeline.get_bars_1m("BTCUSDT")
+    assert len(bars_1m) == 120
+    assert len(pipeline.get_bars_15m("BTCUSDT")) > 0
+    assert len(pipeline.get_bars_30m("BTCUSDT")) > 0
+
+    # 2. ATR computed
+    atrs = pipeline.get_atr_30m_values()
+    assert atrs["BTCUSDT"] > 0.0
+
+    # 3. ZERO live cycles dispatched during warmup
+    assert len(cycle_dispatches) == 0

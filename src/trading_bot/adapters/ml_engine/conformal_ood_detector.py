@@ -91,6 +91,25 @@ class ConformalSubspaceOODDetector(OODDetectorPort):
             raise RuntimeError("Detector has not been fitted.")
         return self._mean_vector
 
+    @classmethod
+    def from_saved_calibration(
+        cls,
+        config: ConformalOODConfig,
+        mean_vector: Sequence[float],
+        precision_matrix: Sequence[Sequence[float]],
+        covariance_matrix: Sequence[Sequence[float]],
+        threshold_ood: float,
+        condition_number: float,
+    ) -> ConformalSubspaceOODDetector:
+        """Construct fitted ConformalSubspaceOODDetector from saved calibration matrices."""
+        detector = cls(config=config)
+        detector._mean_vector = np.asarray(mean_vector, dtype=np.float64)
+        detector._precision_matrix = np.asarray(precision_matrix, dtype=np.float64)
+        detector._covariance_matrix = np.asarray(covariance_matrix, dtype=np.float64)
+        detector._threshold_ood = threshold_ood
+        detector._condition_number = condition_number
+        return detector
+
     def fit(
         self,
         train_features: Sequence[Sequence[float]],
