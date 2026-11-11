@@ -100,11 +100,15 @@ from trading_bot.infrastructure.logging.bot_logger import (
 from trading_bot.ports.agent_ports import (
     PostMortemJudgePort,
 )
-from trading_bot.ports.execution_gateway_port import ExecutionGatewayPort
+from trading_bot.ports.execution_gateway_port import (
+    ExecutionGatewayPort,
+    HistoricalMultiTFWarmupPort,
+)
 from trading_bot.ports.memory_repository_port import MemoryRepositoryPort
 from trading_bot.ports.ml_model_port import (
     CausalBarrierModelPort,
     OODDetectorPort,
+    ProbabilityCalibratorPort,
     TreeSHAPExplainerPort,
 )
 from trading_bot.ports.rate_limit_governor_port import (
@@ -329,6 +333,18 @@ class LivePaperRunner:
                 "trained_at_utc": new_metadata.trained_at_utc.isoformat(),
                 "file_checksum": new_metadata.file_checksum,
             },
+        )
+
+    def reload_calibrators(
+        self,
+        *,
+        calibrator_long: ProbabilityCalibratorPort | None,
+        calibrator_short: ProbabilityCalibratorPort | None,
+    ) -> None:
+        """Hot-reload fitted Venn-Abers Long/Short calibrators into the live bar pipeline."""
+        self._bar_pipeline.set_calibrators(
+            calibrator_long=calibrator_long,
+            calibrator_short=calibrator_short,
         )
 
     async def handle_bar_closed(self, bar: EnrichedMicroBarRecord) -> None:
@@ -567,9 +583,12 @@ class LivePaperRunner:
                     {"error": str(exc)},
                 )
 
-        # 2.2 Warm-up Rolling Buffers with Recent Historical Klines
+        # 2.2 Warm-up Rolling Buffers with Recent Historical Klines (350 x 30m + 300 x 1m)
         for sym in self.config.symbols:
             try:
+                if isinstance(self._gateway, HistoricalMultiTFWarmupPort):
+                    bars_30m = await self._gateway.fetch_recent_klines_30m(sym, 350)
+                    await self._bar_pipeline.warmup_historical_30m_bars(sym, bars_30m)
                 bars = await self._gateway.fetch_recent_klines_1m(sym, 300)
                 await self._bar_pipeline.warmup_historical_bars(sym, bars)
                 self._system_logger.log_system_event(
@@ -836,7 +855,7 @@ async def bootstrap_live_paper_runner(
         fee_to_edge_service=fee_service,
         playbook_validator=playbook_val,
         max_spread_bps=15.0,
-        min_yz_vol=0.005,
+        min_yz_vol=0.002,
         max_uncertainty_width=0.45,
     )
 

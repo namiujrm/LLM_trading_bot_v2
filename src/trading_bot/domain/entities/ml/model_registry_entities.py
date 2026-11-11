@@ -36,6 +36,7 @@ class ModelArtifactMetadata(BaseModel):
     brier_skill_score: float
     max_drawdown_pct: float
     file_checksum: str
+    backtest_metrics: dict[str, float] | None
 
 
 class ModelPromotionRecord(BaseModel):

@@ -30,10 +30,12 @@ from trading_bot.adapters.ml_engine.conformal_ood_detector import ConformalSubsp
 from trading_bot.adapters.ml_engine.constrained_lgbm_model import ConstrainedLGBMModel
 from trading_bot.adapters.ml_engine.native_treeshap_explainer import NativeTreeSHAPExplainer
 from trading_bot.adapters.ml_engine.oof_ridge_prior import OOFRidgePrior
+from trading_bot.adapters.ml_engine.tabulated_venn_abers import TabulatedVennAbersCalibrator
 from trading_bot.domain.entities.ml.ml_configs import (
     CoherenceGateConfig,
     ConformalOODConfig,
     ConstrainedLGBMConfig,
+    FastVennAbersConfig,
     LGBMMonotonicConstraints,
     RidgePriorConfig,
     TreeSHAPConfig,
@@ -52,9 +54,10 @@ from trading_bot.domain.services.ml.economic_sign_verifier import EconomicSignVe
 from trading_bot.ports.ml_model_port import (
     CausalBarrierModelPort,
     OODDetectorPort,
+    ProbabilityCalibratorPort,
     TreeSHAPExplainerPort,
 )
-from trading_bot.ports.model_registry_port import ModelRegistryPort
+from trading_bot.ports.model_registry_port import CalibratorRegistryPort, ModelRegistryPort
 
 
 def compute_directory_artifacts_checksum(directory: Path) -> str:
@@ -76,7 +79,7 @@ def compute_directory_artifacts_checksum(directory: Path) -> str:
     return hasher.hexdigest()
 
 
-class FileModelRegistry(ModelRegistryPort):
+class FileModelRegistry(ModelRegistryPort, CalibratorRegistryPort):
     """File-system based ML Model Registry with atomic swap promotion and DB audit trail."""
 
     def __init__(
@@ -543,3 +546,87 @@ class FileModelRegistry(ModelRegistryPort):
                             )
 
         return models
+
+    @staticmethod
+    def _serialize_calibrator_tables(calibrator: TabulatedVennAbersCalibrator) -> dict[str, Any]:
+        """Extract JSON-serializable tables from a fitted TabulatedVennAbersCalibrator."""
+        return {
+            "config": calibrator.config.model_dump(mode="json"),
+            "grid_scores": calibrator.grid_scores.tolist(),
+            "table_p0": calibrator.table_p0.tolist(),
+            "table_p1": calibrator.table_p1.tolist(),
+            "table_pcal": calibrator.table_pcal.tolist(),
+            "table_delta": calibrator.table_delta.tolist(),
+        }
+
+    async def save_calibrators(
+        self,
+        *,
+        role: ModelRole,
+        calibrator_long: ProbabilityCalibratorPort,
+        calibrator_short: ProbabilityCalibratorPort,
+    ) -> str:
+        """Persist fitted Long/Short Venn-Abers calibrators alongside registered model role."""
+        if role == ModelRole.CHAMPION:
+            target_dir = self._base_dir / "champion"
+        elif role == ModelRole.CHALLENGER:
+            target_dir = self._base_dir / "challenger"
+        else:
+            raise ValueError(
+                f"Calibrators persistence only supports CHAMPION or CHALLENGER, got {role}"
+            )
+
+        if not isinstance(calibrator_long, TabulatedVennAbersCalibrator):
+            raise TypeError(
+                f"calibrator_long must be TabulatedVennAbersCalibrator, got {type(calibrator_long)}"
+            )
+        if not isinstance(calibrator_short, TabulatedVennAbersCalibrator):
+            raise TypeError(
+                f"calibrator_short must be TabulatedVennAbersCalibrator, got {type(calibrator_short)}"
+            )
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "long": self._serialize_calibrator_tables(calibrator_long),
+            "short": self._serialize_calibrator_tables(calibrator_short),
+        }
+        cal_path = target_dir / "venn_abers_cal.json"
+        tmp_path = target_dir / "venn_abers_cal.json.tmp"
+        tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+        tmp_path.replace(cal_path)
+        return str(cal_path)
+
+    async def load_champion_calibrators(
+        self,
+    ) -> tuple[ProbabilityCalibratorPort, ProbabilityCalibratorPort] | None:
+        """Load active Champion Long/Short Venn-Abers calibrators if artifact exists."""
+        cal_path = self._base_dir / "champion" / "venn_abers_cal.json"
+        if not cal_path.exists():
+            return None
+
+        try:
+            raw_data: dict[str, Any] = json.loads(cal_path.read_text(encoding="utf-8"))
+            long_obj = raw_data["long"]
+            short_obj = raw_data["short"]
+            va_long = TabulatedVennAbersCalibrator.from_saved_tables(
+                config=FastVennAbersConfig.model_validate(long_obj["config"]),
+                grid_scores=long_obj["grid_scores"],
+                table_p0=long_obj["table_p0"],
+                table_p1=long_obj["table_p1"],
+                table_pcal=long_obj["table_pcal"],
+                table_delta=long_obj["table_delta"],
+            )
+            va_short = TabulatedVennAbersCalibrator.from_saved_tables(
+                config=FastVennAbersConfig.model_validate(short_obj["config"]),
+                grid_scores=short_obj["grid_scores"],
+                table_p0=short_obj["table_p0"],
+                table_p1=short_obj["table_p1"],
+                table_pcal=short_obj["table_pcal"],
+                table_delta=short_obj["table_delta"],
+            )
+        except Exception as err:
+            raise ModelArtifactCorruptError(
+                f"Failed to parse venn_abers_cal.json in {cal_path.parent}: {err}"
+            ) from err
+
+        return va_long, va_short

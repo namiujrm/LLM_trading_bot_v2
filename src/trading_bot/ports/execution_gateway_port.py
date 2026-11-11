@@ -69,3 +69,14 @@ class ExecutionGatewayPort(Protocol):
     async def close_user_data_stream(self, listen_key: str) -> None:
         """Close an active user data stream listenKey."""
         ...
+
+
+@runtime_checkable
+class HistoricalMultiTFWarmupPort(Protocol):
+    """Extended exchange gateway port for fetching historical 30m klines during warmup."""
+
+    async def fetch_recent_klines_30m(
+        self, symbol: str, limit: int
+    ) -> list[EnrichedMicroBarRecord]:
+        """Fetch recent completed 30m klines from exchange for deep indicator warm-up."""
+        ...

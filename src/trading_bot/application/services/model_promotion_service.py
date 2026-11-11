@@ -22,7 +22,7 @@ from trading_bot.domain.entities.ml.model_registry_entities import (
     ModelArtifactMetadata,
     ModelPromotionRecord,
 )
-from trading_bot.ports.model_registry_port import ModelRegistryPort
+from trading_bot.ports.model_registry_port import CalibratorRegistryPort, ModelRegistryPort
 from trading_bot.ports.telegram_port import TelegramNotifierPort
 
 logger = logging.getLogger(__name__)
@@ -98,6 +98,15 @@ class ModelPromotionService:
                 new_shap_explainer=new_shap_explainer,
                 new_metadata=new_metadata,
             )
+            if isinstance(self._model_registry, CalibratorRegistryPort) and hasattr(
+                self._live_paper_runner, "reload_calibrators"
+            ):
+                new_cals = await self._model_registry.load_champion_calibrators()
+                if new_cals is not None:
+                    self._live_paper_runner.reload_calibrators(
+                        calibrator_long=new_cals[0],
+                        calibrator_short=new_cals[1],
+                    )
             logger.info(
                 "Hot-reloaded live runner with promoted Champion model: %s",
                 new_metadata.model_id,

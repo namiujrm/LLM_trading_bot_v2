@@ -100,6 +100,7 @@ def make_test_model_metadata(model_id: str, role: ModelRole) -> ModelArtifactMet
         brier_skill_score=0.12,
         max_drawdown_pct=0.05,
         file_checksum="sha256_mock_checksum",
+        backtest_metrics=None,
     )
 
 

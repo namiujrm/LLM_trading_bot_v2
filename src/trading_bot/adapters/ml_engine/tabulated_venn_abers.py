@@ -94,6 +94,26 @@ class TabulatedVennAbersCalibrator(ProbabilityCalibratorPort):
             raise RuntimeError("TabulatedVennAbersCalibrator has not been fitted.")
         return self._table_delta
 
+    @classmethod
+    def from_saved_tables(
+        cls,
+        *,
+        config: FastVennAbersConfig,
+        grid_scores: Sequence[float],
+        table_p0: Sequence[float],
+        table_p1: Sequence[float],
+        table_pcal: Sequence[float],
+        table_delta: Sequence[float],
+    ) -> TabulatedVennAbersCalibrator:
+        """Reconstruct fitted TabulatedVennAbersCalibrator from serialized interpolation tables."""
+        cal = cls(config=config)
+        cal._grid_scores = np.asarray(grid_scores, dtype=np.float64)
+        cal._table_p0 = np.asarray(table_p0, dtype=np.float64)
+        cal._table_p1 = np.asarray(table_p1, dtype=np.float64)
+        cal._table_pcal = np.asarray(table_pcal, dtype=np.float64)
+        cal._table_delta = np.asarray(table_delta, dtype=np.float64)
+        return cal
+
     def fit(
         self,
         scores: Sequence[float],
