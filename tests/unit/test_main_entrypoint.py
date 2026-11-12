@@ -37,6 +37,7 @@ from trading_bot.domain.entities.ml.model_registry_entities import (
     ModelArtifactMetadata,
     ModelRole,
 )
+from trading_bot.domain.entities.quant.symbolic_alpha import SymbolicAlphaCandidate
 from trading_bot.domain.entities.risk.account_state import (
     AccountPortfolioContext,
     ActivePositionSnapshot,
@@ -46,6 +47,7 @@ from trading_bot.domain.entities.telegram.telegram_models import TelegramCommand
 from trading_bot.infrastructure.config_schemas import TelegramConfig
 from trading_bot.interfaces.main import TradingBotSystemDaemon, main
 from trading_bot.ports.execution_gateway_port import ExecutionGatewayPort
+from trading_bot.ports.math_alpha_agent_port import MathAlphaAgentPort
 
 
 class MockResponse:
@@ -1012,3 +1014,138 @@ def test_format_challenger_comparison_message_with_walk_forward_metrics() -> Non
     assert "Binned ECE" in msg
     assert "ETH: 38.50" in msg
     assert "KHUYẾN NGHỊ THĂNG HẠNG" in msg
+
+
+@pytest.mark.asyncio
+async def test_handle_funnel_command_formatting(tmp_path: Path) -> None:
+    """Verify /funnel command returns comprehensive 3-stage funnel metrics and symbol rejection reasons."""
+    mock_telegram = AsyncMock(spec=TelegramBotAdapter)
+    mock_runner = MagicMock()
+    mock_runner.cycle_history = [
+        TradingCycleSummary(
+            cycle_timestamp_ms=1700000000000,
+            btc_result=SymbolCycleResult(
+                symbol="BTCUSDT",
+                funnel_passed=False,
+                funnel_stage="STAGE_B_FEE_EDGE",
+                thesis=None,
+                blueprint=None,
+                verdict=None,
+                order_id=None,
+                is_shadow=False,
+                rejection_reason="EXPECTED_EDGE_BELOW_FEE_HURDLE",
+            ),
+            altcoin_results={
+                "ETHUSDT": SymbolCycleResult(
+                    symbol="ETHUSDT",
+                    funnel_passed=False,
+                    funnel_stage="STAGE_A_RULES",
+                    thesis=None,
+                    blueprint=None,
+                    verdict=None,
+                    order_id=None,
+                    is_shadow=False,
+                    rejection_reason="YZ_VOL_BELOW_MIN (0.00120 < 0.00200)",
+                )
+            },
+            executed_orders_count=0,
+            shadow_orders_count=0,
+        )
+    ]
+    mock_pipeline = MagicMock()
+    mock_pipeline.get_all_latest_funnel_inputs.return_value = {}
+    mock_runner.bar_pipeline = mock_pipeline
+
+    daemon = TradingBotSystemDaemon(
+        env_mapping={
+            "EXECUTION_MODE": "TESTNET",
+            "MODELS_DIR": str(tmp_path / "models"),
+            "DATASET_36M_PATH": "data/features_36m/36m_features_labels_all_4pairs.parquet",
+        },
+        session=None,
+        db_manager=None,
+        gateway=None,
+        ws_ingestor=None,
+        telegram_adapter=mock_telegram,
+        runner=mock_runner,
+    )
+
+    req = TelegramCommandRequest(
+        command="funnel",
+        args=[],
+        user_id="123",
+        chat_id="456",
+        raw_text="/funnel",
+    )
+    result = await daemon.handle_funnel_command(req)
+    assert "BÁO CÁO VIỄN TRẮC PHỄU 3 TẦNG" in result
+    assert "BTCUSDT:" in result
+    assert "STAGE_B_FEE_EDGE" in result
+    assert "EXPECTED_EDGE_BELOW_FEE_HURDLE" in result
+    assert "ETHUSDT:" in result
+    assert "YZ_VOL_BELOW_MIN" in result
+    mock_telegram.send_text_message.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_retrain_hook_full_triggers_math_alpha_evolution(tmp_path: Path) -> None:
+    """Verify on_retrain_hook('full') queries failure lessons, calls MathAlphaAgent across 4 clusters, and sends Telegram report."""
+    mock_telegram = AsyncMock(spec=TelegramBotAdapter)
+    mock_agent = AsyncMock(spec=MathAlphaAgentPort)
+    mock_agent.generate_candidates_for_cluster.return_value = [
+        SymbolicAlphaCandidate(
+            alpha_id="alpha_test_regime",
+            dsl_expression="ts_zscore(close - ts_mean(close, 20), 48)",
+            causal_cluster="CLUSTER_0_REGIME",
+            long_monotonic_prior=1,
+            short_monotonic_prior=-1,
+            targeted_blindspot="Asian compression false breakout",
+            economic_rationale="Mean reversion of overextended price from short term baseline",
+        )
+    ]
+
+    daemon = TradingBotSystemDaemon(
+        env_mapping={
+            "EXECUTION_MODE": "TESTNET",
+            "MODELS_DIR": str(tmp_path / "models"),
+            "DATASET_36M_PATH": "data/features_36m/36m_features_labels_all_4pairs.parquet",
+        },
+        session=None,
+        db_manager=None,
+        gateway=None,
+        ws_ingestor=None,
+        telegram_adapter=mock_telegram,
+        runner=None,
+    )
+
+    daemon.set_math_alpha_agent(mock_agent)
+    mock_training_svc = AsyncMock()
+    now_dt = datetime.now(tz=UTC)
+    mock_meta = ModelArtifactMetadata(
+        model_id="challenger_full_v1",
+        role=ModelRole.CHALLENGER,
+        feature_names=["hurst_exponent_100"],
+        trained_at_utc=now_dt,
+        training_sample_count=151511,
+        net_sharpe=21.50,
+        brier_score=0.2480,
+        brier_skill_score=0.0010,
+        max_drawdown_pct=0.0210,
+        file_checksum="xyz",
+        backtest_metrics=None,
+    )
+    mock_training_svc.train_challenger_model.return_value = (mock_meta, None, None, None)
+    daemon.set_training_service(mock_training_svc)
+
+    # Execute /retrain full
+    retrain_res = await daemon.on_retrain_hook("full")
+    assert "Challenger retraining job launched" in retrain_res
+    if daemon.background_tasks:
+        await asyncio.gather(*list(daemon.background_tasks))
+
+    # Verify agent was invoked across all 4 causal clusters
+    assert mock_agent.generate_candidates_for_cluster.await_count == 4
+    # Verify training service called with mode='full'
+    mock_training_svc.train_challenger_model.assert_awaited_once()
+    # Verify Telegram notification was sent
+    mock_telegram.send_text_message.assert_awaited()

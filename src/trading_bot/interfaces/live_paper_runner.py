@@ -220,6 +220,10 @@ class LivePaperRunner:
         return list(self._cycle_history)
 
     @property
+    def bar_pipeline(self) -> LiveBarPipelineService:
+        return self._bar_pipeline
+
+    @property
     def barrier_model(self) -> CausalBarrierModelPort:
         return self._barrier_model
 
