@@ -29,14 +29,25 @@ from typing import Any
 
 import aiohttp
 import asyncpg
+import polars as pl
 from dotenv import load_dotenv
 
+from trading_bot.adapters.agents.math_alpha_agent import (
+    CLUSTER_0_REGIME,
+    CLUSTER_1_MICRO,
+    CLUSTER_2_DERIV,
+    CLUSTER_3_CROSS,
+    MathAlphaAgentAdapter,
+)
+from trading_bot.adapters.agents.ninerouter_client import NinerouterClient
 from trading_bot.adapters.binance.binance_futures_gateway import BinanceFuturesGatewayAdapter
 from trading_bot.adapters.binance.ws_micro_ingestor import BinanceFuturesWSIngestor
 from trading_bot.adapters.ml_engine.constrained_lgbm_model import CANONICAL_FEATURES
 from trading_bot.adapters.ml_engine.file_model_registry import FileModelRegistry
 from trading_bot.adapters.ml_engine.model_trainer_adapter import LGBMModelTrainerAdapter
 from trading_bot.adapters.persistence.database import DatabaseManager
+from trading_bot.adapters.persistence.pgvector_memory_repo import PgvectorMemoryRepository
+from trading_bot.adapters.quant_engine.polars_dsl_compiler import PolarsAlphaDSLCompiler
 from trading_bot.adapters.telegram.telegram_bot_adapter import TelegramBotAdapter
 from trading_bot.application.services.model_promotion_service import ModelPromotionService
 from trading_bot.application.services.model_training_service import ModelTrainingService
@@ -47,6 +58,12 @@ from trading_bot.domain.entities.execution.shadow_order import ShadowOrderRecord
 from trading_bot.domain.entities.market.market_state import SemanticQuantPacket
 from trading_bot.domain.entities.ml.ml_configs import TreeSHAPConfig
 from trading_bot.domain.entities.ml.model_registry_entities import ModelArtifactMetadata
+from trading_bot.domain.entities.quant.quant_configs import AlphaDSLConfig
+from trading_bot.domain.entities.quant.symbolic_alpha import (
+    AlphaGatekeeperConfig,
+    AlphaGateResult,
+    SymbolicAlphaCandidate,
+)
 from trading_bot.domain.entities.risk.account_state import (
     AccountPortfolioContext,
     ActivePositionSnapshot,
@@ -60,17 +77,24 @@ from trading_bot.domain.exceptions import (
     ChampionModelNotFoundError,
     ModelArtifactCorruptError,
 )
+from trading_bot.domain.services.quant.alpha_ast_validator import AlphaASTValidator
+from trading_bot.domain.services.quant.statistical_alpha_gatekeeper import (
+    StatisticalAlphaGatekeeper,
+)
 from trading_bot.infrastructure.config_schemas import (
     ConfigLoader,
     DatabaseConfig,
 )
 from trading_bot.interfaces.live_paper_runner import (
+    InMemoryRateLimitGovernor,
     LivePaperRunner,
     LivePaperRunnerConfig,
     bootstrap_live_paper_runner,
 )
 from trading_bot.ports.execution_gateway_port import ExecutionGatewayPort
 from trading_bot.ports.market_data_port import MarketDataPort
+from trading_bot.ports.math_alpha_agent_port import MathAlphaAgentPort
+from trading_bot.ports.rate_limit_governor_port import RouteQuotaSpec
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +123,18 @@ class TradingBotSystemDaemon:
         self._model_registry: FileModelRegistry | None = None
         self._training_service: ModelTrainingService | None = None
         self._promotion_service: ModelPromotionService | None = None
+        self._memory_repo: PgvectorMemoryRepository | None = None
+        self._math_alpha_agent: MathAlphaAgentPort | None = None
+        self._alpha_gatekeeper: StatisticalAlphaGatekeeper | None = None
+        self._alpha_compiler: PolarsAlphaDSLCompiler | None = None
         self._evolution_task: asyncio.Task[None] | None = None
         self._time_sync_task: asyncio.Task[None] | None = None
         self._background_tasks: set[asyncio.Task[None]] = set()
+
+        if "DATASET_36M_PATH" in env_mapping and len(env_mapping["DATASET_36M_PATH"].strip()) > 0:
+            self._dataset_path: str = env_mapping["DATASET_36M_PATH"].strip()
+        else:
+            self._dataset_path = "data/features_36m/36m_features_labels_all_4pairs.parquet"
 
         self._is_initialized: bool = False
         self._is_running: bool = False
@@ -188,8 +221,81 @@ class TradingBotSystemDaemon:
         return self._promotion_service
 
     @property
+    def math_alpha_agent(self) -> MathAlphaAgentPort | None:
+        return self._math_alpha_agent
+
+    @property
+    def memory_repo(self) -> PgvectorMemoryRepository | None:
+        return self._memory_repo
+
+    @property
+    def alpha_gatekeeper(self) -> StatisticalAlphaGatekeeper | None:
+        return self._alpha_gatekeeper
+
+    @property
+    def alpha_compiler(self) -> PolarsAlphaDSLCompiler | None:
+        return self._alpha_compiler
+
+    def set_math_alpha_agent(self, agent: MathAlphaAgentPort) -> None:
+        """Inject or override MathAlphaAgent instance."""
+        self._math_alpha_agent = agent
+
+    def set_memory_repo(self, repo: PgvectorMemoryRepository) -> None:
+        """Inject or override PgvectorMemoryRepository instance."""
+        self._memory_repo = repo
+
+    def set_training_service(self, service: ModelTrainingService) -> None:
+        """Inject or override ModelTrainingService instance."""
+        self._training_service = service
+
+    @property
     def background_tasks(self) -> set[asyncio.Task[Any]]:
         return self._background_tasks
+
+    def _initialize_math_alpha_agent(self) -> None:
+        """Initialize MathAlphaAgentAdapter with 9Router LLM and AST validator."""
+        if self._math_alpha_agent is not None:
+            return
+        if (
+            "NINEROUTER_API_KEY" not in self._env
+            or len(self._env["NINEROUTER_API_KEY"].strip()) == 0
+        ):
+            logger.info(
+                "NINEROUTER_API_KEY not found in environment. MathAlphaAgent will remain uninitialized."
+            )
+            return
+
+        try:
+            nr_cfg = ConfigLoader.load_ninerouter_config(self._env)
+            deep_model = nr_cfg.deep_tier_model
+            route_spec = RouteQuotaSpec(
+                route_id=f"nr_{deep_model}",
+                model_name=deep_model,
+                rpm_limit=60,
+                tpm_limit=100000,
+                rpd_limit=10000,
+                min_interval_ms=1000,
+                max_concurrency=4,
+            )
+            governor = InMemoryRateLimitGovernor(specs_by_tier={deep_model: [route_spec]})
+            nr_client = NinerouterClient(
+                config=nr_cfg,
+                governor=governor,
+                session=self._session,
+                logger=None,
+            )
+            ast_validator = AlphaASTValidator()
+            self._math_alpha_agent = MathAlphaAgentAdapter(
+                ninerouter_client=nr_client,
+                rate_limit_governor=governor,
+                model_tier=deep_model,
+                temperature=0.7,
+                max_tokens=8192,
+                ast_validator=ast_validator,
+            )
+            logger.info("MathAlphaAgentAdapter initialized successfully with tier: %s", deep_model)
+        except Exception as exc:
+            logger.error("Failed to initialize MathAlphaAgentAdapter: %s", exc, exc_info=True)
 
     # -------------------------------------------------------------------------
     # Lifecycle: Initialize, Run, Shutdown
@@ -223,6 +329,7 @@ class TradingBotSystemDaemon:
         try:
             await self._db_manager.initialize()
             logger.info("Database pool initialized successfully")
+            self._memory_repo = PgvectorMemoryRepository(self._db_manager)
         except Exception as exc:
             logger.error("Failed to initialize database pool: %s", exc)
 
@@ -350,6 +457,23 @@ class TradingBotSystemDaemon:
             live_paper_runner=self._runner,
             notifier=self._telegram_adapter,
         )
+
+        # 8b. Initialize Math Alpha Engine & Gatekeeper
+        self._initialize_math_alpha_agent()
+        gate_cfg = AlphaGatekeeperConfig(
+            min_valid_sample_ratio=0.90,
+            min_series_std=1e-4,
+            invariance_tol=1e-12,
+            min_abs_rank_ic=0.025,
+            min_abs_icir=0.50,
+            min_t_statistic=2.5,
+            min_daily_blocks_for_icir=5,
+            daily_block_bars=48,
+            min_quantile_monotonicity=0.80,
+            max_collinearity_corr=0.60,
+        )
+        self._alpha_gatekeeper = StatisticalAlphaGatekeeper(gate_cfg)
+        self._alpha_compiler = PolarsAlphaDSLCompiler(AlphaASTValidator())
 
         # 9. Intercept cycle ready and trade conclusions for Telegram notifications
         self._wire_cycle_summary_hook()
@@ -582,6 +706,7 @@ class TradingBotSystemDaemon:
         self._telegram_adapter.set_on_approve_model(self.on_approve_model_hook)
         self._telegram_adapter.set_on_retrain(self.on_retrain_hook)
         self._telegram_adapter.register_custom_command("status", self.handle_status_command)
+        self._telegram_adapter.register_custom_command("funnel", self.handle_funnel_command)
         adapter_any: Any = self._telegram_adapter
         adapter_any._handle_cmd_positions = self.handle_positions_command
 
@@ -763,6 +888,81 @@ class TradingBotSystemDaemon:
             f"• *Pending Orders:* `{order_count}`",
         ]
         return "\n".join(lines)
+
+    async def handle_funnel_command(self, request: TelegramCommandRequest) -> str:
+        """Format and return live /funnel overview showing Stage A/B/C gating status per symbol."""
+        if self._runner is None:
+            msg = "⚠️ *HỆ THỐNG PHỄU (FUNNEL STATUS)*\n\nRunner chưa được khởi tạo."
+            if self._telegram_adapter is not None:
+                await self._telegram_adapter.send_text_message(msg, None)
+            return msg
+
+        history = self._runner.cycle_history
+        if len(history) > 0:
+            last_summary: TradingCycleSummary | None = history[-1]
+        else:
+            last_summary = None
+
+        lines: list[str] = [
+            "🛡️ *BÁO CÁO VIỄN TRẮC PHỄU 3 TẦNG (TIERED FUNNEL)*\n",
+            "• *Ngưỡng quy chuẩn bảo vệ vốn:*",
+            "  - Stage A Min YZ Vol: `20.0 bps` (0.0020)",
+            "  - Stage A Max Spread: `15.0 bps`",
+            "  - Stage B Fee-to-Edge Hurdle: `10.0 bps` (Taker 0.05% x 2)",
+            "  - Stage B Min Conviction: $P^* \\ge 52.0\\%$\n",
+        ]
+
+        if last_summary is not None:
+            cycle_dt = datetime.fromtimestamp(last_summary.cycle_timestamp_ms / 1000.0, tz=UTC)
+            lines.append(
+                f"⏰ *Chu kỳ nến 30m gần nhất:* `{cycle_dt.strftime('%Y-%m-%d %H:%M:%S UTC')}`"
+            )
+
+            btc_res = last_summary.btc_result
+            if btc_res.funnel_passed:
+                btc_icon = "✅ VƯỢT QUA"
+                btc_reason = "CLEARED"
+            else:
+                btc_icon = f"❌ CHẶN ({btc_res.funnel_stage})"
+                btc_reason = str(btc_res.rejection_reason)
+            lines.append(f"• *BTCUSDT:* {btc_icon}\n  ↳ Lý do: `{btc_reason}`")
+
+            for sym, alt_res in sorted(last_summary.altcoin_results.items()):
+                if alt_res.funnel_passed:
+                    alt_icon = "✅ VƯỢT QUA"
+                    alt_reason = "CLEARED"
+                else:
+                    alt_icon = f"❌ CHẶN ({alt_res.funnel_stage})"
+                    alt_reason = str(alt_res.rejection_reason)
+                lines.append(f"• *{sym}:* {alt_icon}\n  ↳ Lý do: `{alt_reason}`")
+
+            lines.append(
+                f"\n📊 Khớp lệnh chu kỳ: `{last_summary.executed_orders_count}` | Shadow Tracking: `{last_summary.shadow_orders_count}`"
+            )
+        else:
+            lines.append("⏳ Chưa có chu kỳ 30m nào hoàn tất kể từ khi khởi động.")
+
+        pipeline_inputs = self._runner.bar_pipeline.get_all_latest_funnel_inputs()
+        if len(pipeline_inputs) > 0:
+            lines.append("\n📈 *CHỈ SỐ THỰC TẾ TRÊN NẾN ĐANG ĐO ĐẠC:*")
+            for sym, inp in sorted(pipeline_inputs.items()):
+                max_p = max(inp.p_long_cal, inp.p_short_cal)
+                edge_bps = (2.0 * max_p - 1.0) * (1.8 * inp.garman_klass_vol) * 10000.0
+                yz_bps = inp.yang_zhang_vol * 10000.0
+                gk_bps = inp.garman_klass_vol * 10000.0
+                if inp.is_ood:
+                    ood_str = "CẢNH BÁO"
+                else:
+                    ood_str = "AN TOÀN"
+                lines.append(
+                    f"• *{sym}:* YZ Vol: `{yz_bps:.1f}` bps | GK Vol: `{gk_bps:.1f}` bps | Spread: `{inp.spread_bps:.1f}` bps\n"
+                    f"  ↳ $P^*$: `{max_p:.1%}` | Kỳ vọng $E[\\text{{Edge}}]$: `{edge_bps:.1f}` bps vs 10 bps | OOD: `{ood_str}`"
+                )
+
+        full_msg = "\n".join(lines)
+        if self._telegram_adapter is not None:
+            await self._telegram_adapter.send_text_message(full_msg, None)
+        return full_msg
 
     async def handle_positions_command(self) -> str:
         """Fetch live positions from Binance gateway and format with BE/Close inline buttons."""
@@ -1067,6 +1267,219 @@ class TradingBotSystemDaemon:
             f"Bấm nút bên dưới để thăng hạng Challenger (Hot-Reload không dừng bot) hoặc dùng `/approve_model`:"
         )
 
+    async def _execute_math_alpha_evolution(self) -> None:
+        """Run quantitative Math Alpha Evolution across 4 clusters using 9Router LLM & 36M dataset."""
+        if self._math_alpha_agent is None:
+            self._initialize_math_alpha_agent()
+
+        if self._math_alpha_agent is None:
+            logger.info("MathAlphaAgent not available, skipping alpha formula evolution.")
+            return
+
+        if self._telegram_adapter is not None:
+            notice = (
+                "🧠 *BẮT ĐẦU CHU TRÌNH TIẾN HÓA CÔNG THỨC MATH ALPHA (4 CỤM CAUSAL)*\n\n"
+                "• Đang trích xuất bài học thua lỗ (failure traps) từ bộ nhớ DB...\n"
+                "• Gọi 9Router LLM (Deep Tier) để sinh công thức mới qua 4 cụm Causal...\n"
+                "• Sát hạch nghiêm ngặt qua 4 Stages của Statistical Alpha Gatekeeper trên tập dữ liệu 36M..."
+            )
+            await self._telegram_adapter.send_text_message(notice, None)
+
+        # 1. Ingest Blindspots from Postgres
+        blindspots: list[dict[str, Any]] = []
+        if self._memory_repo is not None:
+            try:
+                sample_vec: list[float] = [0.0] * 16
+                pack = await self._memory_repo.fetch_stratified_pack(
+                    vector_16d=sample_vec,
+                    playbook="TREND_CONTINUATION_BREAKOUT",
+                    k=20,
+                )
+                for case in pack.bucket2_failure_traps:
+                    blindspots.append(
+                        {
+                            "type": "FALSE_POSITIVE_TRAP",
+                            "symbol": case.symbol,
+                            "lesson": case.lesson_summary,
+                        }
+                    )
+            except Exception as exc:
+                logger.warning("Failed to fetch failure traps from memory repo: %s", exc)
+
+        if len(blindspots) == 0:
+            blindspots = [
+                {
+                    "type": "FALSE_POSITIVE_TRAP",
+                    "symbol": "BTCUSDT",
+                    "lesson": "False breakout in low-volatility Asian chop (< 20 bps range) leading to fee exhaustion.",
+                },
+                {
+                    "type": "FALSE_POSITIVE_TRAP",
+                    "symbol": "ETHUSDT",
+                    "lesson": "Lagging breakout entry after BTC momentum reversal causing severe adverse selection.",
+                },
+                {
+                    "type": "FALSE_POSITIVE_TRAP",
+                    "symbol": "SOLUSDT",
+                    "lesson": "VPIN toxic flow spike without directional volume follow-through triggering premature entry.",
+                },
+            ]
+
+        # 2. Generate Candidates Across 4 Clusters
+        clusters = [
+            CLUSTER_0_REGIME,
+            CLUSTER_1_MICRO,
+            CLUSTER_2_DERIV,
+            CLUSTER_3_CROSS,
+        ]
+        all_candidates: list[SymbolicAlphaCandidate] = []
+        for cluster_name in clusters:
+            try:
+                cands = await self._math_alpha_agent.generate_candidates_for_cluster(
+                    cluster_name=cluster_name,
+                    blindspots=blindspots,
+                    decayed_alphas=[],
+                    target_count=2,
+                )
+                all_candidates.extend(cands)
+            except Exception as exc:
+                logger.warning("Error generating candidates for cluster %s: %s", cluster_name, exc)
+
+        if len(all_candidates) == 0:
+            if self._telegram_adapter is not None:
+                await self._telegram_adapter.send_text_message(
+                    "⚠️ Không sinh được ứng viên alpha hợp lệ từ 9Router. Tiếp tục huấn luyện Challenger...",
+                    None,
+                )
+            return
+
+        # 3. Evaluate Candidates over 36M Dataset via Gatekeeper
+        dataset_file = Path(self._dataset_path)
+        if (
+            not dataset_file.exists()
+            or self._alpha_gatekeeper is None
+            or self._alpha_compiler is None
+        ):
+            logger.warning(
+                "Dataset %s not found or gatekeeper/compiler missing. Cannot evaluate alphas on 36M.",
+                self._dataset_path,
+            )
+            return
+
+        df = pl.read_parquet(dataset_file)
+        derived_cols: list[pl.Expr] = []
+        if "returns" not in df.columns and "close" in df.columns:
+            derived_cols.append(
+                (pl.col("close") / pl.col("close").shift(1) - 1.0).fill_null(0.0).alias("returns")
+            )
+        if "vwap" not in df.columns and "quote_volume" in df.columns and "volume" in df.columns:
+            derived_cols.append(
+                (pl.col("quote_volume") / pl.col("volume").clip(lower_bound=1e-8)).alias("vwap")
+            )
+        if "yang_zhang_vol" not in df.columns and "volatility_gk" in df.columns:
+            derived_cols.append(pl.col("volatility_gk").alias("yang_zhang_vol"))
+        if "hurst" not in df.columns and "hurst_exponent_100" in df.columns:
+            derived_cols.append(pl.col("hurst_exponent_100").alias("hurst"))
+        if "vpin" not in df.columns and "vpin_toxicity_pct" in df.columns:
+            derived_cols.append(pl.col("vpin_toxicity_pct").alias("vpin"))
+        if "funding_rate" not in df.columns and "funding_crowded_pos_z" in df.columns:
+            derived_cols.append(pl.col("funding_crowded_pos_z").alias("funding_rate"))
+        if "open_interest" not in df.columns and "oi_directional_score" in df.columns:
+            derived_cols.append(pl.col("oi_directional_score").alias("open_interest"))
+        if "btc_returns" not in df.columns and "btc_lead_catchup_gap" in df.columns:
+            derived_cols.append(pl.col("btc_lead_catchup_gap").alias("btc_returns"))
+        if "fracdiff_close" not in df.columns and "fracdiff_momentum_z" in df.columns:
+            derived_cols.append(pl.col("fracdiff_momentum_z").alias("fracdiff_close"))
+        if "spread_bps_mean" not in df.columns:
+            derived_cols.append(pl.lit(2.5).alias("spread_bps_mean"))
+        if len(derived_cols) > 0:
+            df = df.with_columns(derived_cols)
+
+        target_returns = df["net_return"].fill_nan(float("nan")).fill_null(float("nan")).to_list()
+        realized_vol = df["volatility_gk"].fill_nan(float("nan")).fill_null(float("nan")).to_list()
+        existing_cols = [c for c in CANONICAL_FEATURES if c in df.columns]
+        existing_alpha_matrix = [
+            df[c].fill_nan(float("nan")).fill_null(float("nan")).to_list() for c in existing_cols
+        ]
+        df_trunc = df.slice(0, len(df) // 2)
+
+        alpha_dsl_cfg = AlphaDSLConfig(
+            max_ast_depth=10,
+            max_ast_nodes=50,
+            min_window_bars=1,
+            max_window_bars=480,
+            division_epsilon=1e-8,
+        )
+
+        passed_alphas: list[tuple[SymbolicAlphaCandidate, AlphaGateResult]] = []
+        rejected_alphas: list[tuple[SymbolicAlphaCandidate, str]] = []
+
+        for cand in all_candidates:
+            try:
+                expr = self._alpha_compiler.compile_formula(cand.dsl_expression, alpha_dsl_cfg)
+                alpha_full = (
+                    self._alpha_compiler.execute_alpha(df, expr)
+                    .fill_nan(float("nan"))
+                    .fill_null(float("nan"))
+                    .to_list()
+                )
+                alpha_trunc = (
+                    self._alpha_compiler.execute_alpha(df_trunc, expr)
+                    .fill_nan(float("nan"))
+                    .fill_null(float("nan"))
+                    .to_list()
+                )
+                gate_res = self._alpha_gatekeeper.evaluate_candidate(
+                    alpha_id=cand.alpha_id,
+                    alpha_oos_series=alpha_full,
+                    alpha_truncated_series=alpha_trunc,
+                    target_returns_oos=target_returns,
+                    realized_vol_series=realized_vol,
+                    expected_monotonic_sign=cand.long_monotonic_prior,
+                    existing_alpha_matrix_oos=existing_alpha_matrix,
+                )
+                if gate_res.passed_all_gates:
+                    passed_alphas.append((cand, gate_res))
+                else:
+                    if gate_res.failed_stage is not None:
+                        failed_msg = gate_res.failed_stage
+                    else:
+                        failed_msg = "FAILED_GATE"
+                    rejected_alphas.append((cand, failed_msg))
+            except Exception as exc:
+                rejected_alphas.append((cand, f"COMPILE_ERROR: {str(exc)[:40]}"))
+
+        # 4. Report results to Telegram
+        report_lines: list[str] = [
+            "🔬 *KẾT QUẢ TIẾN HÓA MATH ALPHA (STATISTICAL GATEKEEPER 36M)*\n",
+            f"• Số ứng viên sinh bởi 9Router LLM: `{len(all_candidates)}`",
+            f"• Số công thức vượt qua sát hạch: `{len(passed_alphas)}/{len(all_candidates)}`\n",
+        ]
+
+        if len(passed_alphas) > 0:
+            report_lines.append("🏆 *DANH SÁCH ALPHA VƯỢT QUA KIỂM ĐỊNH:*")
+            for idx, (cand, res) in enumerate(passed_alphas, 1):
+                report_lines.append(
+                    f"{idx}. `{cand.alpha_id}` (*{cand.causal_cluster}*)\n"
+                    f"   ↳ Công thức: `{cand.dsl_expression}`\n"
+                    f"   ↳ Rank IC: `{res.oos_rank_ic:+.4f}` | ICIR: `{res.oos_icir:.2f}` | Mono: `{res.quantile_monotonicity_corr:+.2f}`\n"
+                    f"   ↳ Blindspot: _{cand.targeted_blindspot}_\n"
+                )
+        else:
+            report_lines.append("⚠️ Không có công thức nào vượt qua toàn bộ 4 Stage kỳ này.")
+            if len(rejected_alphas) > 0:
+                report_lines.append("\n*Các lý do loại trừ chính:*")
+                for cand, fail_reason in rejected_alphas[:4]:
+                    report_lines.append(f"• `{cand.alpha_id}`: `{fail_reason}`")
+
+        report_lines.append(
+            "\n➡️ Đang tiếp tục chuyển sang giai đoạn huấn luyện mô hình Challenger..."
+        )
+        alpha_report_msg = "\n".join(report_lines)
+
+        if self._telegram_adapter is not None:
+            await self._telegram_adapter.send_text_message(alpha_report_msg, None)
+
     async def on_retrain_hook(self, mode: str) -> str:
         """Launch background async retraining of Challenger model."""
         training_svc = self._training_service
@@ -1075,6 +1488,9 @@ class TradingBotSystemDaemon:
 
         async def run_training_job() -> None:
             try:
+                if mode == "full":
+                    await self._execute_math_alpha_evolution()
+
                 meta, _, _, _ = await training_svc.train_challenger_model(
                     mode=mode,
                     market_data_port=self._gateway
